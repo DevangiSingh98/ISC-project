@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NewsProof Public Verification Certificate</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans antialiased flex flex-col justify-between">
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-950/80 px-6 py-4">
+    <div class="max-w-4xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
+          <i class="fa-solid fa-shield-halved text-white text-sm"></i>
+        </div>
+        <span class="font-bold text-white tracking-tight">NewsProof Public Trust Signal</span>
+      </div>
+      <a href="/" class="text-xs text-blue-400 hover:text-blue-300 font-medium">&larr; Open Full NewsProof Dashboard</a>
+    </div>
+  </header>
+
+  <!-- Main Card -->
+  <main class="max-w-3xl mx-auto px-6 py-12 w-full">
+    <div id="loading" class="text-center py-12">
+      <div class="animate-spin w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-3"></div>
+      <p class="text-sm text-slate-400">Retrieving Cryptographic Record from Transparency Log...</p>
+    </div>
+
+    <div id="content" class="hidden bg-slate-800/60 border border-slate-700/60 rounded-3xl p-8 shadow-2xl backdrop-blur">
+      <div class="flex items-center justify-between pb-6 border-b border-slate-700/60 mb-6">
+        <div>
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Official Authenticity Verdict</span>
+          <h1 id="publicVerdict" class="text-3xl font-extrabold text-white mt-1"></h1>
+        </div>
+        <div class="text-right">
+          <span class="text-xs text-slate-400 uppercase font-semibold">Calibrated Score</span>
+          <div id="publicConfidence" class="text-3xl font-extrabold text-blue-400"></div>
+        </div>
+      </div>
+
+      <p id="publicExplanation" class="text-sm text-slate-300 leading-relaxed mb-6"></p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs mb-6">
+        <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
+          <span class="text-slate-400 block mb-1">Cryptographic Provenance</span>
+          <span id="publicIssuer" class="font-semibold text-slate-200 text-sm"></span>
+        </div>
+        <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800">
+          <span class="text-slate-400 block mb-1">Append-Only Transparency Anchor</span>
+          <span id="publicLedger" class="font-mono text-indigo-300 text-xs truncate block"></span>
+        </div>
+      </div>
+
+      <div class="flex justify-between items-center pt-4 border-t border-slate-700/60 text-xs text-slate-400">
+        <span id="publicSha"></span>
+        <button id="downloadCertBtn" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium transition flex items-center gap-2">
+          <i class="fa-solid fa-file-pdf"></i> Download Audit PDF
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800/80 py-6 text-center text-xs text-slate-500">
+    Verified by NewsProof &bull; C2PA Conformance &bull; Independent Dual-Track Verification
+  </footer>
+
+  <script>
+    const pathParts = window.location.pathname.split('/');
+    const assetId = pathParts[pathParts.length - 1];
+
+    async function loadPublicResult() {
+      try {
+        const resp = await fetch('/api/v1/result/' + assetId);
+        if (!resp.ok) {
+          document.getElementById('loading').innerHTML = '<p class="text-rose-400">Verification record not found or expired.</p>';
+          return;
+        }
+        const data = await resp.json();
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('content').classList.remove('hidden');
+
+        document.getElementById('publicVerdict').innerText = data.verdict;
+        document.getElementById('publicConfidence').innerText = data.confidence_score.toFixed(1) + '%';
+        document.getElementById('publicExplanation').innerText = data.explanation;
+        document.getElementById('publicIssuer').innerText = data.provenance.issuer ? `C2PA Signed: ${data.provenance.issuer}` : 'No C2PA Passport (Verified via AI Forensics)';
+        document.getElementById('publicSha').innerText = `SHA-256: ${data.sha256.substring(0, 16)}...`;
+        
+        if (data.ledger) {
+          document.getElementById('publicLedger').innerText = `Root: ${data.ledger.merkle_root.substring(0, 24)}...`;
+        }
+
+        document.getElementById('downloadCertBtn').onclick = () => {
+          window.open(`/api/v1/report/${data.asset_id}/pdf`, '_blank');
+        };
+      } catch (e) {
+        document.getElementById('loading').innerHTML = '<p class="text-rose-400">Failed to connect to verification node.</p>';
+      }
+    }
+
+    if (assetId && assetId !== 'v' && assetId !== '') {
+      loadPublicResult();
+    } else {
+      document.getElementById('loading').innerHTML = '<p class="text-slate-400">No verification ID specified.</p>';
+    }
+  </script>
+</body>
+</html>
