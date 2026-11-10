@@ -17,9 +17,14 @@ class CompressionForensicsAnalyzer:
         Computes Error Level Analysis (ELA).
         Returns:
             (anomaly_score, ela_intensity_map)
+
+        Note: For webpage/document screenshots, block heterogeneity is naturally high because
+        multiple independently-compressed CDN assets (ads, photos, thumbnails, widgets) coexist
+        on the canvas. ELA heterogeneity is therefore NOT a reliable splicing indicator for
+        document screenshots — the flat_ratio-based dampening factor accounts for this.
         """
         rgb_img = image.convert("RGB")
-        
+
         # Resave image to memory buffer at fixed JPEG quality
         buffer = io.BytesIO()
         rgb_img.save(buffer, format="JPEG", quality=self.ela_resave_quality)
@@ -28,15 +33,16 @@ class CompressionForensicsAnalyzer:
 
         # Difference between original and resaved
         diff = ImageChops.difference(rgb_img, resaved)
-        
+
         # Convert to numpy array
         diff_arr = np.asarray(diff, dtype=np.float32)
-        diff_intensity = np.mean(diff_arr, axis=2) # H x W
+        diff_intensity = np.mean(diff_arr, axis=2)  # H x W
 
         # Check flat canvas / document screenshot
         gray_arr = np.asarray(image.convert("L"), dtype=np.float32)
         flat_mask = (gray_arr > 235) | (gray_arr < 18)
-        is_doc = float(np.mean(flat_mask)) > 0.35
+        flat_ratio = float(np.mean(flat_mask))
+        is_doc = flat_ratio > 0.35
 
         # Compute local block variances (16x16 blocks)
         h, w = diff_intensity.shape
@@ -44,9 +50,15 @@ class CompressionForensicsAnalyzer:
         block_variances = []
         for i in range(0, h - block_size + 1, block_size):
             for j in range(0, w - block_size + 1, block_size):
-                if is_doc and np.mean(flat_mask[i:i+block_size, j:j+block_size]) > 0.6:
-                    continue # Exclude flat digital canvas blocks from variance calculations
+                block_flat_ratio = float(np.mean(flat_mask[i:i+block_size, j:j+block_size]))
+                # For doc screenshots: skip ALL blocks that are >40% flat (text, whitespace, borders)
+                # This is stricter than the previous >60% threshold to handle partial text rows
+                if is_doc and block_flat_ratio > 0.40:
+                    continue
                 block = diff_intensity[i:i+block_size, j:j+block_size]
+                # Also skip near-zero ELA blocks (very low error = clean compression, uninformative)
+                if np.mean(block) < 1.0:
+                    continue
                 block_variances.append(np.var(block))
 
         if len(block_variances) > 4:
@@ -54,6 +66,15 @@ class CompressionForensicsAnalyzer:
             var_mean = float(np.mean(block_variances)) + 1e-6
             # High variance across blocks indicates inconsistent compression histories (splicing)
             heterogeneity = min(1.0, var_std / (var_mean * 2.5))
+
+            # Document screenshots contain multiple CDN-served assets with different compression
+            # histories — this is structurally expected, not evidence of tampering.
+            # Apply a dampening factor proportional to the flat canvas fraction:
+            # - 0.35 flat (mild doc) → ~0.65x dampening
+            # - 0.67 flat (full page) → ~0.33x dampening
+            if is_doc:
+                doc_dampening = max(0.0, 1.0 - flat_ratio)
+                heterogeneity = heterogeneity * doc_dampening
         else:
             heterogeneity = 0.0
 

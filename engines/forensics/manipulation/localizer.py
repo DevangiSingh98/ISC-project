@@ -51,6 +51,12 @@ class ManipulationLocalizer:
         Analyzes the image for localized splicing, copy-move, or inpainting.
         Includes document/webpage screenshot detection and high-contrast font glyph
         attenuation to prevent mistaking text layout for camera sensor tampering.
+
+        For webpage/document screenshots, the system understands that multiple embedded
+        media blocks (editorial photos, ads, widgets) originate from different CDN sources
+        with different compression histories. Inter-block boundaries are EXPECTED and are
+        NOT evidence of photo-level tampering.
+
         Returns:
             (global_manipulation_score, raw_mask_HxW, base64_rgba_heatmap)
         """
@@ -66,6 +72,7 @@ class ManipulationLocalizer:
         flat_ratio = float(np.mean(flat_canvas))
         is_doc_screenshot = flat_ratio > 0.35
         self.last_is_document_screenshot = is_doc_screenshot
+        self.last_flat_ratio = flat_ratio
 
         # 3. Compute image gradients for structural edge attenuation
         gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
@@ -78,6 +85,19 @@ class ManipulationLocalizer:
             dilated_flat = cv2.dilate(flat_canvas.astype(np.uint8), kernel_font) > 0
             text_or_flat = flat_canvas | (dilated_flat & (grad_mag > 20))
             valid_pixels = ~text_or_flat
+
+            # For dense document screenshots (flat_ratio > 0.5), also mask layout boundaries:
+            # Contiguous photographic "blocks" (ads, photos) are separated by white gutters.
+            # Boundaries between these blocks look like splicing because each block was
+            # independently compressed at a different CDN origin. We suppress the boundary
+            # ring (8px expansion of non-flat → flat transitions) so it isn't scored as a splice.
+            if flat_ratio > 0.50:
+                kernel_boundary = cv2.getStructuringElement(cv2.MORPH_RECT, (8, 8))
+                # Erode valid pixels inward from each blob boundary (suppress outer ring of each media block)
+                valid_eroded = cv2.erode(valid_pixels.astype(np.uint8), kernel_boundary) > 0
+                valid_pixels = valid_eroded
+                # Also update text_or_flat mask for heatmap suppression
+                text_or_flat = ~valid_pixels
         else:
             text_or_flat = np.zeros((h, w), dtype=bool)
             valid_pixels = np.ones((h, w), dtype=bool)
@@ -90,9 +110,11 @@ class ManipulationLocalizer:
         local_std = np.sqrt(variance)
 
         if np.sum(valid_pixels) < 256:
-            # Degraded or empty document
+            # Degraded or empty document / fully suppressed page
             empty_map = np.zeros((h, w), dtype=np.float32)
-            return 0.15, empty_map, "data:image/png;base64,"
+            # Document screenshots with no valid photographic interior pixels are unverifiable
+            self.last_cluster_ratio = 0.0
+            return 0.12, empty_map, "data:image/png;base64,"
 
         # Compute robust statistics ONLY on valid photographic pixels
         valid_std = local_std[valid_pixels]
@@ -111,10 +133,18 @@ class ManipulationLocalizer:
             edge_density = cv2.GaussianBlur(edges, (21, 21), 5)
             raw_anomaly = z_scores * 0.7 + edge_density * 3.0 * 0.3
 
-        # Clustered anomaly detection (morphological opening eliminates isolated edge artifacts)
-        high_z = (z_scores > 2.8).astype(np.uint8)
-        kernel_cl = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+        # Clustered anomaly detection: morphological opening eliminates isolated edge artifacts.
+        # For doc screenshots, require larger coherent clusters (32x32) to suppress ad-boundary noise.
+        z_threshold = 2.8
+        min_cluster_kernel = 9 if not is_doc_screenshot else 16  # stricter for doc screenshots
+        high_z = (z_scores > z_threshold).astype(np.uint8)
+        kernel_cl = cv2.getStructuringElement(cv2.MORPH_RECT, (min_cluster_kernel, min_cluster_kernel))
         clusters = cv2.morphologyEx(high_z, cv2.MORPH_OPEN, kernel_cl)
+
+        # For doc screenshots: only count clusters that are INTERNAL to a valid photographic region
+        # (not at the boundary of valid pixels—those are layout seams, not tamper evidence)
+        if is_doc_screenshot:
+            clusters = clusters & valid_pixels.astype(np.uint8)
 
         # Smooth and scale to [0, 1] probability map for heatmap visualization
         smoothed = cv2.GaussianBlur(z_scores, (11, 11), 3)
@@ -124,6 +154,7 @@ class ManipulationLocalizer:
         # Calculate cluster ratio of valid photographic pixels
         total_valid = np.sum(valid_pixels)
         cluster_ratio = float(np.sum(clusters)) / float(max(total_valid, 1))
+        self.last_cluster_ratio = cluster_ratio
 
         # Manipulation score driven by contiguous tamper cluster area
         if cluster_ratio < 0.015:
@@ -131,8 +162,15 @@ class ManipulationLocalizer:
         else:
             global_score = float(np.clip(0.52 + cluster_ratio * 4.5, 0.52, 0.98))
 
-        if is_doc_screenshot and cluster_ratio < 0.04:
-            global_score = min(global_score, 0.20)
+        # Document screenshots: even if cluster_ratio > 0.04, the cross-CDN compression
+        # heterogeneity of embedded blocks (ads, photos, widgets) is NOT photo manipulation.
+        # Cap the global_score for doc screenshots unless cluster_ratio is very high (> 0.25),
+        # which would indicate genuine internal splicing WITHIN the core article photo.
+        if is_doc_screenshot:
+            if cluster_ratio < 0.25:
+                global_score = min(global_score, 0.28)
+            elif cluster_ratio < 0.50:
+                global_score = min(global_score, 0.45)
 
         # Create RGBA heatmap overlay for display
         heatmap_color = cv2.applyColorMap((norm_map * 255).astype(np.uint8), cv2.COLORMAP_JET)
