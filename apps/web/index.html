@@ -65,6 +65,19 @@
             </label>
           </div>
         </div>
+
+        <!-- Quick Test Samples Selector -->
+        <div class="mt-4 p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-semibold text-slate-300 flex items-center gap-2">
+              <i class="fa-solid fa-flask text-blue-400"></i> Try Pre-configured Test Samples:
+            </span>
+            <span class="text-[11px] text-slate-500">1-click verification of all 8 verdict paths</span>
+          </div>
+          <div id="samplesBar" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+            <!-- Dynamically populated or loaded -->
+          </div>
+        </div>
       </div>
     </div>
 
@@ -254,6 +267,11 @@
   </main>
 
   <script>
+    // Automatically detect API base URL (supports running on localhost:8000 or opening file directly)
+    const API_BASE = (window.location.protocol === 'file:' || (window.location.port !== '8000' && window.location.port !== ''))
+      ? 'http://127.0.0.1:8000'
+      : '';
+
     let currentResult = null;
 
     const fileInput = document.getElementById('fileInput');
@@ -290,6 +308,53 @@
       }
     });
 
+    // Check backend health & populate sample buttons on page load
+    async function initPage() {
+      try {
+        const resp = await fetch(`${API_BASE}/api/v1/samples`);
+        if (resp.ok) {
+          const samples = await resp.json();
+          renderSampleButtons(samples);
+        }
+      } catch (e) {
+        console.warn('Could not load samples immediately:', e);
+      }
+    }
+
+    function renderSampleButtons(samples) {
+      const bar = document.getElementById('samplesBar');
+      if (!bar) return;
+      bar.innerHTML = '';
+
+      samples.forEach(s => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'p-2 rounded-xl bg-slate-900/80 hover:bg-slate-700/80 border border-slate-700 text-left transition flex flex-col justify-between group';
+        btn.innerHTML = `
+          <span class="text-[11px] font-semibold text-slate-200 group-hover:text-blue-400 truncate block">${s.title}</span>
+          <span class="text-[9px] text-slate-400 mt-1 block truncate">${s.expected_verdict}</span>
+        `;
+        btn.onclick = () => loadAndVerifySample(s.filename, s.title);
+        bar.appendChild(btn);
+      });
+    }
+
+    async function loadAndVerifySample(filename, title) {
+      loadingState.classList.remove('hidden');
+      resultsContainer.classList.add('hidden');
+
+      try {
+        const fileResp = await fetch(`${API_BASE}/api/v1/samples/${filename}`);
+        if (!fileResp.ok) throw new Error(`Could not fetch sample ${filename}`);
+        const blob = await fileResp.blob();
+        const file = new File([blob], filename, { type: 'image/jpeg' });
+        await handleUpload(file);
+      } catch (err) {
+        alert('Sample load error: ' + err.message + '\n\nPlease ensure backend is running at ' + (API_BASE || 'http://127.0.0.1:8000'));
+        loadingState.classList.add('hidden');
+      }
+    }
+
     async function handleUpload(file) {
       loadingState.classList.remove('hidden');
       resultsContainer.classList.add('hidden');
@@ -300,7 +365,7 @@
       formData.append('deep_scan', deepScan);
 
       try {
-        const resp = await fetch('/api/v1/verify', {
+        const resp = await fetch(`${API_BASE}/api/v1/verify`, {
           method: 'POST',
           body: formData
         });
@@ -314,7 +379,12 @@
         currentResult = data;
         renderResults(data, file);
       } catch (err) {
-        alert('Network error connecting to NewsProof verification backend: ' + err.message);
+        alert(
+          'Network connection error: ' + err.message + 
+          '\n\nUnable to reach the NewsProof backend at ' + (API_BASE || window.location.origin) +
+          '\nMake sure the backend server is running with:\n' +
+          'uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000'
+        );
       } finally {
         loadingState.classList.add('hidden');
       }
@@ -473,16 +543,20 @@
 
       // Export Buttons
       document.getElementById('downloadPdfBtn').onclick = () => {
-        window.open(`/api/v1/report/${res.asset_id}/pdf`, '_blank');
+        window.open(`${API_BASE}/api/v1/report/${res.asset_id}/pdf`, '_blank');
       };
       document.getElementById('viewJsonLdBtn').onclick = () => {
-        window.open(`/api/v1/report/${res.asset_id}/jsonld`, '_blank');
+        window.open(`${API_BASE}/api/v1/report/${res.asset_id}/jsonld`, '_blank');
       };
 
       if (res.ledger) {
         document.getElementById('ledgerInfoText').innerHTML = `Anchored in Merkle Log &bull; Root: <code class="text-indigo-400">${res.ledger.merkle_root.substring(0, 16)}...</code>`;
       }
     }
+
+    // Trigger on load
+    initPage();
+  </script>
   </script>
 </body>
 </html>

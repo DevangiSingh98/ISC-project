@@ -50,6 +50,65 @@ report_generator = ReportGenerator()
 # In-memory store for verification results
 results_store: dict[str, VerificationResult] = {}
 
+SAMPLES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "test_samples"))
+
+AVAILABLE_SAMPLES = [
+    {
+        "filename": "c2pa_signed_authentic.jpg",
+        "title": "C2PA Verified Photo",
+        "expected_verdict": "Verified Authentic",
+        "description": "Cryptographically signed by Reuters with valid X.509 certificate chain."
+    },
+    {
+        "filename": "c2pa_edited_declared.jpg",
+        "title": "Declared Editorial Edits",
+        "expected_verdict": "Authentic - Edited (Declared)",
+        "description": "Signed image disclosing approved crop and color adjustments in C2PA manifest."
+    },
+    {
+        "filename": "authentic_press.jpg",
+        "title": "Unsigned Authentic Photo",
+        "expected_verdict": "Likely Authentic",
+        "description": "Clean camera visual without C2PA manifest; clean noise and natural 1/f spectrum."
+    },
+    {
+        "filename": "spliced_manipulated.jpg",
+        "title": "Spliced / Forged Image",
+        "expected_verdict": "Suspicious / Manipulated",
+        "description": "Foreign image patch spliced in; localized SRM noise anomalies isolated in heatmap."
+    },
+    {
+        "filename": "ai_synthetic_diffusion.jpg",
+        "title": "AI-Generated Visual",
+        "expected_verdict": "AI-Generated",
+        "description": "High-frequency 2D FFT periodic grid artifacts typical of diffusion upsampling."
+    },
+    {
+        "filename": "c2pa_discrepancy.jpg",
+        "title": "Core Invariant Discrepancy",
+        "expected_verdict": "Discrepancy: Requires Editorial Review",
+        "description": "Valid C2PA signature coexisting with localized tampering; surfaces both proof and heatmap."
+    },
+    {
+        "filename": "c2pa_broken_tampered.jpg",
+        "title": "Broken Provenance",
+        "expected_verdict": "Provenance Broken",
+        "description": "Signed with C2PA credentials but image bytes tampered with post-signing."
+    }
+]
+
+@app.get("/api/v1/samples")
+def list_samples():
+    return AVAILABLE_SAMPLES
+
+@app.get("/api/v1/samples/{filename}")
+def get_sample_file(filename: str):
+    safe_name = os.path.basename(filename)
+    path = os.path.join(SAMPLES_DIR, safe_name)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Sample not found")
+    return FileResponse(path, media_type="image/jpeg")
+
 @app.get("/", response_class=HTMLResponse)
 def serve_dashboard():
     dashboard_path = os.path.join(os.path.dirname(__file__), "..", "..", "web", "index.html")
