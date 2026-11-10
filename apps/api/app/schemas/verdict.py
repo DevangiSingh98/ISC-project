@@ -60,3 +60,4 @@ class VerificationResult(BaseModel):
     forensics: ForensicsDetails
     ledger: Optional[LedgerReference] = None
     deep_scan_used: bool = False
+

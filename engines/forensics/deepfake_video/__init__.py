@@ -16,3 +16,4 @@ class VideoForensicsDetector:
             "message": "Video deepfake detection scheduled for v2",
             "score": None
         }
+

@@ -8,3 +8,4 @@
 - 2026-11-10: High model uncertainty or variance routes safely to 'Unverifiable' rather than false alarms.
 - 2026-11-10: Evaluation benchmarks utilize freely accessible datasets (CASIA v2, Columbia, CoMoFoD, GenImage, Wikimedia Commons) with substitute corpus note.
 - 2026-11-10: C2PA conformance documented as "validated against the C2PA conformance fixtures" with UI warning on untrusted/self-signed certs.
+

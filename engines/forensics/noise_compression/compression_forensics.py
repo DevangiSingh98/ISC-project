@@ -137,3 +137,4 @@ class CompressionForensicsAnalyzer:
             "double_jpeg_score": double_jpeg_score,
             "prnu_score": prnu_inconsistency
         }
+

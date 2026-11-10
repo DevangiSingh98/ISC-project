@@ -73,3 +73,4 @@ def inspect_image_metadata(image: Image.Image, raw_bytes: bytes) -> Dict[str, An
         "byte_size": len(raw_bytes),
         "exif": exif_data
     }
+

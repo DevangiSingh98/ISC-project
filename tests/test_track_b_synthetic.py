@@ -57,3 +57,4 @@ def test_deep_scan_flag_and_latency(natural_photo):
     res = detector.analyze(natural_photo, deep_scan=True)
     assert res["deep_scan_used"] is True
     assert res["latency_ms"] >= 40.0 # Verified deep scan execution path
+

@@ -26,3 +26,4 @@ def test_schema_serialization():
     )
     assert result.verdict == VerdictType.LIKELY_AUTHENTIC
     assert result.confidence_score == 94.5
+

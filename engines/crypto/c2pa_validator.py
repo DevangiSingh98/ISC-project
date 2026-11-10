@@ -115,3 +115,4 @@ class C2PAValidator:
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+

@@ -122,3 +122,4 @@ class MerkleTransparencyLog:
 
 # Default singleton ledger instance
 default_transparency_log = MerkleTransparencyLog()
+

@@ -56,3 +56,4 @@ def test_compression_forensics_ela_and_double_jpeg(clean_image, spliced_image):
     assert 0.0 <= spliced_results["compression_anomaly_score"] <= 1.0
     # Inconsistent splice increases ELA block variance
     assert spliced_results["ela_score"] >= clean_results["ela_score"] * 0.9
+

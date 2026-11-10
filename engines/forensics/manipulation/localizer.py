@@ -109,3 +109,4 @@ class ManipulationLocalizer:
         base64_heatmap = f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('utf-8')}"
 
         return global_score, norm_map, base64_heatmap
+

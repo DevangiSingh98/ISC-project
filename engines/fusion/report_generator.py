@@ -159,3 +159,4 @@ class ReportGenerator:
         doc.build(elements)
         buffer.seek(0)
         return buffer.getvalue()
+

@@ -111,3 +111,4 @@ def test_report_generator_json_ld_and_pdf():
     assert isinstance(pdf_bytes, bytes)
     assert len(pdf_bytes) > 500
     assert pdf_bytes.startswith(b"%PDF-")
+

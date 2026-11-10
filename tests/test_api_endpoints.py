@@ -79,3 +79,4 @@ def test_api_html_routes(client):
     v_resp = client.get("/v/dummy-asset-123")
     assert v_resp.status_code == 200
     assert "NewsProof Public Trust Signal" in v_resp.text
+

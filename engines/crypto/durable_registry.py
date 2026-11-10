@@ -52,3 +52,4 @@ class DurableCredentialRegistry:
         return len(self.records)
 
 default_durable_registry = DurableCredentialRegistry()
+

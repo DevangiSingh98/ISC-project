@@ -7,3 +7,4 @@ Planned features for v2:
 - Context menu: "Verify image with NewsProof"
 - In-page trust pill badges attached to `<img />` tags
 - Popover report preview linking to `/verify/{asset_id}`
+

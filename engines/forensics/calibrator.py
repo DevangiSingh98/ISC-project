@@ -61,3 +61,4 @@ class ProbabilityCalibrator:
         calibrated = np.array([self.calibrate(p) for p in raw_probs])
         self.held_out_ece = compute_ece(calibrated, true_labels)
         return self.held_out_ece
+

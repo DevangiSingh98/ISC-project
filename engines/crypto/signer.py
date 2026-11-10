@@ -68,3 +68,4 @@ class C2PASigner:
 
         with c2pa.Reader(output_image_path) as reader:
             return reader.json()
+

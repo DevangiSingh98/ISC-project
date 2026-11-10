@@ -31,3 +31,4 @@
 - Expected Calibration Error (ECE) < 0.05 enforced for in-distribution data; held-out reported separately.
 - PRNU acts strictly as auxiliary signal; high epistemic variance routes safely to `Unverifiable`.
 - Tested and reported against freely available benchmark suites (CASIA v2 / Columbia / GenImage / Wikimedia).
+

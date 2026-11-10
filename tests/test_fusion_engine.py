@@ -187,3 +187,4 @@ def test_calibration_ece_and_isotonic():
     unseen_labels = np.random.binomial(1, 0.5, 100)
     held_out_ece = calibrator.evaluate_held_out(unseen_probs, unseen_labels)
     assert held_out_ece >= 0.0
+
