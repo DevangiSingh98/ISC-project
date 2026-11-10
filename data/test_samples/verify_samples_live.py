@@ -8,3 +8,4 @@ for s in samples:
     res = requests.post('http://127.0.0.1:8000/api/v1/verify', files=files, data={'deep_scan': 'false'}).json()
     status = 'MATCH' if res['verdict'] == s['expected_verdict'] else 'DIFF'
     print(f"[{status}] {s['title']} -> {res['verdict']} (Confidence: {res['confidence_score']}%)")
+

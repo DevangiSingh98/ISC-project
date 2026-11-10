@@ -17,3 +17,4 @@ print('IS DOCUMENT SCREENSHOT:', data.get('forensics', {}).get('is_document_scre
 print('TOP SIGNALS:')
 for s in data.get('top_signals', []):
     print("  *", s['name'] + ":", s['description'])
+
