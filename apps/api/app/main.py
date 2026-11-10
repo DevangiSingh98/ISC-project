@@ -173,6 +173,7 @@ async def verify_image(
 
         # Track B: AI Forensics
         manip_score, raw_mask, heatmap_b64 = localizer.generate_heatmap(image)
+        is_doc = getattr(localizer, "last_is_document_screenshot", False)
         synth_results = synthetic_detector.analyze(image, deep_scan=deep_scan)
         compression_results = compression_analyzer.analyze(image)
 
@@ -183,6 +184,7 @@ async def verify_image(
             prnu_score=compression_results["prnu_score"],
             uncertainty_variance=synth_results["uncertainty_variance"],
             is_degraded=is_degraded,
+            is_document_screenshot=is_doc,
             heatmap_base64=heatmap_b64,
             dimensions=[meta["width"], meta["height"]]
         )

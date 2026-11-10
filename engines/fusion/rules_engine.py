@@ -194,6 +194,26 @@ class FusionRulesEngine:
 
         # Check clean forensics
         if forensics.manipulation_score < self.clean_threshold and forensics.synthetic_score < self.clean_threshold:
+            if getattr(forensics, "is_document_screenshot", False):
+                signals.append(ContributingSignal(
+                    name="Document Layout & Typography Filtering",
+                    weight=0.85,
+                    score=0.05,
+                    description="Webpage / document layout detected. Rendered text typography was filtered from camera sensor noise analysis."
+                ))
+                signals.append(ContributingSignal(
+                    name="Embedded Media Integrity",
+                    weight=0.8,
+                    score=0.1,
+                    description="Visual photographic content exhibits clean natural sensor noise with no evidence of tampering or generative artifacts."
+                ))
+                return (
+                    VerdictType.LIKELY_AUTHENTIC,
+                    88.0,
+                    "Webpage / document screenshot layout detected. Rendered article typography was filtered from camera sensor noise checks; embedded visual media is clean with no signs of tampering.",
+                    signals
+                )
+
             signals.append(ContributingSignal(
                 name="Natural Sensor Noise Consistency",
                 weight=0.8,

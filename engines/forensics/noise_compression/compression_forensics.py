@@ -33,20 +33,27 @@ class CompressionForensicsAnalyzer:
         diff_arr = np.asarray(diff, dtype=np.float32)
         diff_intensity = np.mean(diff_arr, axis=2) # H x W
 
+        # Check flat canvas / document screenshot
+        gray_arr = np.asarray(image.convert("L"), dtype=np.float32)
+        flat_mask = (gray_arr > 235) | (gray_arr < 18)
+        is_doc = float(np.mean(flat_mask)) > 0.35
+
         # Compute local block variances (16x16 blocks)
         h, w = diff_intensity.shape
         block_size = 16
         block_variances = []
         for i in range(0, h - block_size + 1, block_size):
             for j in range(0, w - block_size + 1, block_size):
+                if is_doc and np.mean(flat_mask[i:i+block_size, j:j+block_size]) > 0.6:
+                    continue # Exclude flat digital canvas blocks from variance calculations
                 block = diff_intensity[i:i+block_size, j:j+block_size]
                 block_variances.append(np.var(block))
 
-        if len(block_variances) > 0:
+        if len(block_variances) > 4:
             var_std = float(np.std(block_variances))
             var_mean = float(np.mean(block_variances)) + 1e-6
             # High variance across blocks indicates inconsistent compression histories (splicing)
-            heterogeneity = min(1.0, var_std / (var_mean * 2.0))
+            heterogeneity = min(1.0, var_std / (var_mean * 2.5))
         else:
             heterogeneity = 0.0
 

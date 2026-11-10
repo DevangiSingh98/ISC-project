@@ -37,6 +37,7 @@ class ForensicsDetails(BaseModel):
     prnu_score: Optional[float] = None
     uncertainty_variance: float = 0.0
     is_degraded: bool = False
+    is_document_screenshot: bool = False
     heatmap_base64: Optional[str] = None
     dimensions: Optional[List[int]] = None
 
