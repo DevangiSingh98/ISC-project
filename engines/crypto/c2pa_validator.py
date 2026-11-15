@@ -1,10 +1,14 @@
 import json
 import os
 import tempfile
-from typing import Dict, Any, Optional, List
+from typing import TYPE_CHECKING, Dict, Any, Optional, List
 import c2pa
 from apps.api.app.schemas.verdict import ProvenanceDetails
 from .trust_store import default_trust_store, TrustStore
+
+if TYPE_CHECKING:
+    from apps.api.app.schemas.video_verdict import VideoProvenanceDetails
+
 
 class C2PAValidator:
     """
@@ -115,4 +119,34 @@ class C2PAValidator:
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+    def validate_video_bytes(self, data: bytes, extension: str = ".mp4") -> "VideoProvenanceDetails":
+        """
+        Validates C2PA Content Credentials embedded in a video file (MP4/MOV/WebM).
+        Returns a VideoProvenanceDetails instance. Falls back cleanly if the
+        container has no C2PA manifest (many video files will not).
+        The existing validate_bytes() image path is completely unchanged.
+        """
+        from apps.api.app.schemas.video_verdict import VideoProvenanceDetails
+
+        # Determine container format label from extension
+        ext_map = {".mp4": "MP4", ".mov": "MOV", ".webm": "WebM", ".avi": "AVI"}
+        container_format = ext_map.get(extension.lower(), extension.lstrip(".").upper())
+
+        # Re-use the existing image validation logic — c2pa-python supports video containers
+        image_prov = self.validate_bytes(data, extension=extension)
+
+        return VideoProvenanceDetails(
+            has_c2pa=image_prov.has_c2pa,
+            is_valid=image_prov.is_valid,
+            is_trusted=image_prov.is_trusted,
+            issuer=image_prov.issuer,
+            cert_chain_status=image_prov.cert_chain_status,
+            hash_match=image_prov.hash_match,
+            declared_actions=image_prov.declared_actions,
+            edit_history=image_prov.edit_history,
+            raw_manifest=image_prov.raw_manifest,
+            untrusted_warning=image_prov.untrusted_warning,
+            container_format=container_format,
+        )
 

@@ -1,11 +1,15 @@
 import numpy as np
-from typing import Tuple, List, Optional, Dict, Any
+from typing import TYPE_CHECKING, Tuple, List, Optional, Dict, Any
 from apps.api.app.schemas.verdict import (
     VerdictType,
     ContributingSignal,
     ProvenanceDetails,
     ForensicsDetails,
 )
+
+if TYPE_CHECKING:
+    from apps.api.app.schemas.video_verdict import VideoForensicsDetails, VideoProvenanceDetails
+
 
 class FusionRulesEngine:
     """
@@ -277,5 +281,188 @@ class FusionRulesEngine:
             VerdictType.UNVERIFIABLE,
             45.0,
             "Forensic signals fall within an ambiguous threshold margin without cryptographic provenance. Insufficient confidence for definitive ruling.",
+            signals
+        )
+
+    def evaluate_video(
+        self,
+        provenance: "VideoProvenanceDetails",
+        forensics: "VideoForensicsDetails",
+    ) -> Tuple[VerdictType, float, str, List[ContributingSignal]]:
+        """
+        Fusion decision for video assets.
+
+        Applies the same 8-verdict taxonomy as the image pipeline.
+        Video-specific signals:
+        - deepfake_score: fused temporal + frame-level score
+        - temporal_inconsistency_score: optical flow discontinuity
+        - face_detected_in_video: boosts confidence when deepfake signals
+          are found in a face region
+
+        Core Invariant is preserved: a valid C2PA signature is never
+        silently overridden by an isolated AI score.
+        """
+        signals: List[ContributingSignal] = []
+
+        # 1. Provenance Broken (C2PA present, hash mismatch or invalid signature)
+        if provenance.has_c2pa and (not provenance.is_valid or provenance.hash_match is False):
+            signals.append(ContributingSignal(
+                name="Video Cryptographic Hash Binding",
+                weight=1.0,
+                score=1.0,
+                description="Video bytes do not match the cryptographic hash signed in the C2PA manifest."
+            ))
+            return (
+                VerdictType.PROVENANCE_BROKEN,
+                98.0,
+                "Video carries C2PA Content Credentials, but signature or hash binding verification failed. File altered post-signing.",
+                signals
+            )
+
+        # 2. Valid C2PA Manifest
+        if provenance.has_c2pa and provenance.is_valid and provenance.hash_match is True:
+            has_forensic_red_flag = (
+                forensics.deepfake_score > self.synth_threshold
+                or forensics.mean_manipulation_score > self.manip_threshold
+            )
+
+            if has_forensic_red_flag:
+                signals.append(ContributingSignal(
+                    name="Video Cryptographic Signature",
+                    weight=0.5,
+                    score=0.1,
+                    description=f"Valid C2PA signature from {provenance.issuer or 'authorized entity'}."
+                ))
+                signals.append(ContributingSignal(
+                    name="Deepfake / Temporal Anomaly",
+                    weight=0.5,
+                    score=max(forensics.deepfake_score, forensics.mean_manipulation_score),
+                    description="Forensics detected deepfake or manipulation signals inconsistent with declared provenance history."
+                ))
+                return (
+                    VerdictType.DISCREPANCY_REQUIRES_REVIEW,
+                    75.0,
+                    "Video carries a valid cryptographic signature, but AI forensics found deepfake or manipulation artefacts. Requires human editorial review.",
+                    signals
+                )
+
+            # Declared editorial actions
+            is_declared_edit = False
+            if provenance.declared_actions:
+                declared_lower = [a.lower() for a in provenance.declared_actions]
+                if any(edit in act for edit in ["crop", "color", "adjust", "resize", "filter", "trim", "edit"] for act in declared_lower):
+                    is_declared_edit = True
+
+            if is_declared_edit:
+                signals.append(ContributingSignal(
+                    name="C2PA Video Action Assertion",
+                    weight=0.9,
+                    score=0.1,
+                    description=f"Manifest discloses approved editorial adjustments: {', '.join(provenance.declared_actions)}."
+                ))
+                return (
+                    VerdictType.AUTHENTIC_EDITED_DECLARED,
+                    95.0,
+                    f"Video cryptographically verified with disclosed editorial modifications: {', '.join(provenance.declared_actions)}.",
+                    signals
+                )
+
+            signals.append(ContributingSignal(
+                name="C2PA Video Provenance",
+                weight=1.0,
+                score=0.05,
+                description=f"Verified C2PA signature chain from {provenance.issuer or 'Trusted Authority'} with unaltered hash binding."
+            ))
+            return (
+                VerdictType.VERIFIED_AUTHENTIC,
+                99.0,
+                "Video cryptographically verified authentic. Content credentials intact with unbroken provenance chain from verified publisher.",
+                signals
+            )
+
+        # 3. No C2PA: Rely on AI forensics
+        is_deepfake = forensics.deepfake_score >= self.synth_threshold
+        is_temporally_inconsistent = forensics.temporal_inconsistency_score >= 0.55
+        is_manipulated = forensics.mean_manipulation_score >= self.manip_threshold
+
+        if is_deepfake:
+            face_note = " Facial regions were detected and scored for manipulation." if forensics.face_detected_in_video else ""
+            signals.append(ContributingSignal(
+                name="Deepfake / Generative Fingerprint",
+                weight=0.9,
+                score=forensics.deepfake_score,
+                description=f"Combined frame-level synthetic and temporal inconsistency signals indicate deepfake generation artefacts.{face_note}"
+            ))
+            if is_temporally_inconsistent:
+                signals.append(ContributingSignal(
+                    name="Temporal Optical Flow Discontinuity",
+                    weight=0.75,
+                    score=forensics.temporal_inconsistency_score,
+                    description="Inter-frame optical flow shows erratic motion field inconsistencies characteristic of face-swap or frame-stitching."
+                ))
+            conf = float(np.clip(50.0 + forensics.deepfake_score * 48.0, 50.0, 99.0))
+            return (
+                VerdictType.SUSPICIOUS_MANIPULATED,
+                round(conf, 1),
+                "Video forensics detected deepfake generation artefacts including abnormal temporal flow patterns and synthetic spectral fingerprints.",
+                signals
+            )
+
+        if is_temporally_inconsistent and not is_deepfake:
+            signals.append(ContributingSignal(
+                name="Temporal Inconsistency",
+                weight=0.75,
+                score=forensics.temporal_inconsistency_score,
+                description="Inter-frame motion field exhibits high variance, suggesting possible frame-level editing or stitching."
+            ))
+            conf = float(np.clip(50.0 + forensics.temporal_inconsistency_score * 40.0, 50.0, 85.0))
+            return (
+                VerdictType.SUSPICIOUS_MANIPULATED,
+                round(conf, 1),
+                "Temporal analysis found motion field discontinuities consistent with frame-level editing. No cryptographic provenance present.",
+                signals
+            )
+
+        if is_manipulated:
+            signals.append(ContributingSignal(
+                name="Frame Pixel Manipulation",
+                weight=0.8,
+                score=forensics.mean_manipulation_score,
+                description="Per-frame SRM noise residuals indicate localised pixel manipulation across multiple frames."
+            ))
+            conf = float(np.clip(50.0 + forensics.mean_manipulation_score * 46.0, 50.0, 98.0))
+            return (
+                VerdictType.SUSPICIOUS_MANIPULATED,
+                round(conf, 1),
+                "Frame-level pixel forensics found consistent manipulation signals across sampled video frames.",
+                signals
+            )
+
+        # Clean video
+        if forensics.mean_manipulation_score < self.clean_threshold and forensics.deepfake_score < self.clean_threshold:
+            signals.append(ContributingSignal(
+                name="Temporal Consistency",
+                weight=0.8,
+                score=0.1,
+                description="Inter-frame optical flow motion fields are consistent with natural camera motion. No deepfake artefacts detected."
+            ))
+            signals.append(ContributingSignal(
+                name="Frame-Level Noise Consistency",
+                weight=0.75,
+                score=0.1,
+                description="Per-frame noise residuals and spectral distributions are consistent with natural video capture."
+            ))
+            return (
+                VerdictType.LIKELY_AUTHENTIC,
+                85.0,
+                "No cryptographic credentials present, but frame-level pixel forensics and temporal optical flow analysis confirm no deepfake or manipulation artefacts.",
+                signals
+            )
+
+        # Ambiguous zone
+        return (
+            VerdictType.UNVERIFIABLE,
+            45.0,
+            "Video forensic signals fall within an ambiguous margin without cryptographic provenance. Insufficient confidence for definitive ruling.",
             signals
         )

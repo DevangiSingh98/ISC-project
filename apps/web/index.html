@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NewsProof | Image Authenticity Verification for Online News</title>
+  <title>NewsProof | Image & Video Authenticity Verification for Online News</title>
+  <meta name="description" content="NewsProof is an AI-powered tool for verifying image and video authenticity using cryptographic C2PA provenance and AI forensics.">
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -16,6 +17,20 @@
       pointer-events: none;
       transition: opacity 0.2s ease-in-out;
     }
+    .frame-strip::-webkit-scrollbar { height: 6px; }
+    .frame-strip::-webkit-scrollbar-track { background: #0f172a; border-radius: 3px; }
+    .frame-strip::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .tab-active {
+      background: rgba(59,130,246,0.15);
+      border-color: rgba(59,130,246,0.5);
+      color: #93c5fd;
+    }
+    .tab-inactive {
+      background: transparent;
+      border-color: transparent;
+      color: #64748b;
+    }
+    .tab-inactive:hover { color: #94a3b8; }
   </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen font-sans antialiased">
@@ -27,7 +42,7 @@
       </div>
       <div>
         <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-          NewsProof <span class="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">v1.0 Image Slice</span>
+          NewsProof <span class="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">v2.0 Image + Video</span>
         </h1>
         <p class="text-xs text-slate-400">Cryptographic Provenance (C2PA) + Calibrated AI Forensics</p>
       </div>
@@ -37,37 +52,56 @@
         <i class="fa-solid fa-link text-indigo-400"></i> Merkle Ledger
       </a>
       <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span> Engine Online
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>Engine Online
       </span>
     </div>
   </nav>
 
   <!-- Main Container -->
   <main class="max-w-7xl mx-auto px-6 py-8">
-    
+
+    <!-- Mode Tabs -->
+    <div class="flex gap-1 mb-6 p-1 bg-slate-800/50 rounded-xl border border-slate-800 w-fit">
+      <button id="tabImage" onclick="switchMode('image')"
+        class="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold border transition-all duration-200 tab-active"
+        aria-label="Image verification mode">
+        <i class="fa-solid fa-image"></i> Image
+      </button>
+      <button id="tabVideo" onclick="switchMode('video')"
+        class="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold border transition-all duration-200 tab-inactive"
+        aria-label="Video verification mode">
+        <i class="fa-solid fa-film"></i> Video
+      </button>
+    </div>
+
     <!-- Upload Section -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-8">
       <div class="lg:col-span-12">
         <div class="border-2 border-dashed border-slate-700 hover:border-blue-500/50 bg-slate-800/40 hover:bg-slate-800/70 rounded-2xl p-8 text-center transition cursor-pointer" id="dropzone">
+          <!-- IMAGE mode inputs -->
           <input type="file" id="fileInput" class="hidden" accept="image/jpeg,image/png,image/webp,image/heic">
+          <!-- VIDEO mode inputs -->
+          <input type="file" id="videoInput" class="hidden" accept="video/mp4,video/quicktime,video/webm">
+
           <div class="w-16 h-16 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center mx-auto mb-4 border border-blue-500/20">
-            <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
+            <i id="uploadIcon" class="fa-solid fa-cloud-arrow-up text-2xl"></i>
           </div>
-          <h3 class="text-lg font-semibold text-white mb-1">Upload News Image to Verify</h3>
-          <p class="text-sm text-slate-400 mb-4">Accepts JPEG, PNG, WebP (under 25MB) &bull; Automatic C2PA & AI Forensics Inspection</p>
+          <h3 id="uploadTitle" class="text-lg font-semibold text-white mb-1">Upload News Image to Verify</h3>
+          <p id="uploadSubtitle" class="text-sm text-slate-400 mb-4">Accepts JPEG, PNG, WebP (under 25MB) &bull; Automatic C2PA &amp; AI Forensics Inspection</p>
           <div class="flex items-center justify-center gap-3">
-            <button onclick="document.getElementById('fileInput').click()" class="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm transition shadow-lg shadow-blue-600/30">
+            <button id="browseBtn" onclick="triggerFilePicker()"
+              class="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm transition shadow-lg shadow-blue-600/30">
               Browse Files
             </button>
-            <label class="flex items-center gap-2 text-xs text-slate-300 bg-slate-800 px-3 py-2 rounded-xl border border-slate-700 cursor-pointer">
+            <label id="deepScanLabel" class="flex items-center gap-2 text-xs text-slate-300 bg-slate-800 px-3 py-2 rounded-xl border border-slate-700 cursor-pointer">
               <input type="checkbox" id="deepScanToggle" class="rounded bg-slate-900 border-slate-700 text-blue-600">
               <span>Enable Deep Scan (DIRE)</span>
             </label>
           </div>
         </div>
 
-        <!-- Quick Test Samples Selector -->
-        <div class="mt-4 p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
+        <!-- Quick Test Samples Selector (image only) -->
+        <div id="samplesSection" class="mt-4 p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
           <div class="flex items-center justify-between mb-3">
             <span class="text-xs font-semibold text-slate-300 flex items-center gap-2">
               <i class="fa-solid fa-flask text-blue-400"></i> Try Pre-configured Test Samples:
@@ -75,7 +109,18 @@
             <span class="text-[11px] text-slate-500">1-click verification of all 8 verdict paths</span>
           </div>
           <div id="samplesBar" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
-            <!-- Dynamically populated or loaded -->
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Video hint (shown only in video mode) -->
+        <div id="videoHint" class="hidden mt-4 p-4 rounded-2xl bg-indigo-950/30 border border-indigo-800/40">
+          <div class="flex items-start gap-3">
+            <i class="fa-solid fa-circle-info text-indigo-400 mt-0.5"></i>
+            <div>
+              <p class="text-xs font-semibold text-indigo-200">Video Analysis Pipeline</p>
+              <p class="text-[11px] text-indigo-300/80 mt-0.5">Frames are sampled at 1 fps &bull; Per-frame SRM noise + 2D FFT analysis (reusing image engines) &bull; Lucas-Kanade optical flow for temporal inconsistency &bull; Haar face detection for deepfake focus &bull; C2PA manifest check for video containers</p>
+            </div>
           </div>
         </div>
       </div>
@@ -84,13 +129,15 @@
     <!-- Loading State -->
     <div id="loadingState" class="hidden text-center py-16">
       <div class="inline-block animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mb-4"></div>
-      <p class="text-slate-300 font-medium">Verifying Cryptographic Credentials & Running AI Forensics...</p>
-      <p class="text-xs text-slate-500 mt-1">Inspecting C2PA manifest &bull; SRM noise residuals &bull; 2D FFT spectral distribution</p>
+      <p id="loadingTitle" class="text-slate-300 font-medium">Verifying Cryptographic Credentials &amp; Running AI Forensics...</p>
+      <p id="loadingSubtitle" class="text-xs text-slate-500 mt-1">Inspecting C2PA manifest &bull; SRM noise residuals &bull; 2D FFT spectral distribution</p>
     </div>
 
-    <!-- Verification Results View -->
+    <!-- ===================================================================
+         IMAGE Verification Results
+    ================================================================== -->
     <div id="resultsContainer" class="hidden space-y-8">
-      
+
       <!-- Top Verdict Banner -->
       <div id="verdictBanner" class="rounded-2xl p-6 border shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div class="flex items-center gap-4">
@@ -122,7 +169,7 @@
 
       <!-- Interactive Inspection Grid -->
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
+
         <!-- Left Column: Visual Inspector with Heatmap Toggle -->
         <div class="lg:col-span-7 space-y-4">
           <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
@@ -168,7 +215,7 @@
 
         <!-- Right Column: Provenance & Forensics Cards -->
         <div class="lg:col-span-5 space-y-4">
-          
+
           <!-- Track A: Cryptographic Passport Card -->
           <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
             <div class="flex items-center justify-between mb-4">
@@ -177,7 +224,7 @@
               </h3>
               <span id="c2paStatusBadge" class="text-xs px-2.5 py-0.5 rounded-full font-semibold"></span>
             </div>
-            
+
             <div class="space-y-3 text-xs">
               <div class="flex justify-between py-1.5 border-b border-slate-800">
                 <span class="text-slate-400">C2PA Manifest</span>
@@ -203,7 +250,7 @@
             <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
               <i class="fa-solid fa-dna text-indigo-400"></i> Track B: AI Lie Detector Ensemble
             </h3>
-            
+
             <div class="space-y-4 text-xs">
               <div>
                 <div class="flex justify-between mb-1">
@@ -227,7 +274,7 @@
 
               <div>
                 <div class="flex justify-between mb-1">
-                  <span class="text-slate-400">Compression & ELA Anomaly</span>
+                  <span class="text-slate-400">Compression &amp; ELA Anomaly</span>
                   <span id="compScoreVal" class="font-bold text-slate-200"></span>
                 </div>
                 <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
@@ -264,51 +311,304 @@
 
     </div>
 
+    <!-- ===================================================================
+         VIDEO Verification Results
+    ================================================================== -->
+    <div id="videoResultsContainer" class="hidden space-y-8">
+
+      <!-- Top Verdict Banner -->
+      <div id="videoVerdictBanner" class="rounded-2xl p-6 border shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        <div class="flex items-center gap-4">
+          <div id="videoVerdictIcon" class="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg"></div>
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs uppercase tracking-wider font-bold text-slate-400">Video Authenticity Verdict</span>
+              <span id="videoC2paTag" class="text-xs px-2 py-0.5 rounded font-medium"></span>
+            </div>
+            <h2 id="videoVerdictTitle" class="text-2xl font-bold tracking-tight"></h2>
+            <p id="videoVerdictExplanation" class="text-sm text-slate-300 max-w-2xl mt-1"></p>
+          </div>
+        </div>
+        <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center min-w-[140px]">
+          <span class="text-xs font-semibold text-slate-400 uppercase">Confidence</span>
+          <div id="videoConfidenceVal" class="text-3xl font-extrabold mt-0.5"></div>
+          <span class="text-[10px] text-emerald-400 font-medium">Calibrated</span>
+        </div>
+      </div>
+
+      <!-- Untrusted warning -->
+      <div id="videoUntrustedWarning" class="hidden bg-amber-950/40 border border-amber-500/40 rounded-xl p-4 flex items-start gap-3">
+        <i class="fa-solid fa-triangle-exclamation text-amber-400 text-lg mt-0.5"></i>
+        <div>
+          <h4 class="text-sm font-semibold text-amber-200">Untrusted / Self-Signed Content Credentials</h4>
+          <p id="videoUntrustedText" class="text-xs text-amber-300/90 mt-0.5"></p>
+        </div>
+      </div>
+
+      <!-- Video Metadata Strip -->
+      <div id="videoMetaStrip" class="bg-slate-800/50 border border-slate-800 rounded-xl px-6 py-4 flex flex-wrap gap-6 text-xs text-slate-400">
+        <span><i class="fa-solid fa-clock text-blue-400 mr-1"></i> <b id="vmDuration" class="text-slate-200"></b> sec</span>
+        <span><i class="fa-solid fa-film text-indigo-400 mr-1"></i> <b id="vmFps" class="text-slate-200"></b> fps</span>
+        <span><i class="fa-solid fa-layer-group text-purple-400 mr-1"></i> <b id="vmFrames" class="text-slate-200"></b> frames</span>
+        <span><i class="fa-solid fa-expand text-cyan-400 mr-1"></i> <b id="vmRes" class="text-slate-200"></b></span>
+        <span><i class="fa-solid fa-code text-teal-400 mr-1"></i> <b id="vmCodec" class="text-slate-200"></b></span>
+        <span class="ml-auto"><i class="fa-solid fa-hashtag text-slate-500 mr-1"></i> SHA-256: <code id="vmSha" class="text-slate-400"></code></span>
+      </div>
+
+      <!-- Main Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        <!-- Left: Worst Frame + Suspicious Frame Strip -->
+        <div class="lg:col-span-7 space-y-4">
+
+          <!-- Worst Frame Inspector -->
+          <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                <i class="fa-solid fa-magnifying-glass text-blue-400"></i> Worst-Case Frame Inspector
+              </h3>
+              <span id="worstFrameTs" class="text-xs text-slate-400 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700"></span>
+            </div>
+            <div id="worstFrameContainer" class="relative rounded-xl overflow-hidden bg-slate-950 border border-slate-700/60 flex items-center justify-center min-h-[280px]">
+              <img id="worstFrameImg" class="max-h-[400px] w-auto object-contain mx-auto" src="" alt="Worst-case frame">
+              <img id="worstFrameHeatmap" class="heatmap-overlay object-contain mx-auto opacity-60" src="" alt="Frame heatmap">
+            </div>
+            <div class="mt-3 flex items-center gap-3">
+              <label class="text-xs text-slate-400 flex items-center gap-2">
+                <span>Heatmap Opacity</span>
+                <input type="range" id="videoOpacitySlider" min="0" max="100" value="60" class="w-24 accent-blue-500">
+              </label>
+            </div>
+          </div>
+
+          <!-- Suspicious Frame Strip -->
+          <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                <i class="fa-solid fa-timeline text-red-400"></i> Suspicious Frame Timeline
+              </h3>
+              <span id="suspiciousFrameCount" class="text-xs text-slate-400 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700"></span>
+            </div>
+            <div id="frameStripEmpty" class="text-xs text-slate-500 italic py-6 text-center">
+              <i class="fa-solid fa-circle-check text-emerald-500 mr-2"></i> No suspicious frames detected above threshold
+            </div>
+            <div id="frameStrip" class="hidden frame-strip flex gap-3 overflow-x-auto pb-2"></div>
+          </div>
+
+        </div>
+
+        <!-- Right: Track A/B + Signals -->
+        <div class="lg:col-span-5 space-y-4">
+
+          <!-- Track A: C2PA Provenance -->
+          <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                <i class="fa-solid fa-passport text-blue-400"></i> Track A: Cryptographic Provenance
+              </h3>
+              <span id="videoC2paBadge" class="text-xs px-2.5 py-0.5 rounded-full font-semibold"></span>
+            </div>
+            <div class="space-y-3 text-xs">
+              <div class="flex justify-between py-1.5 border-b border-slate-800">
+                <span class="text-slate-400">C2PA Manifest</span>
+                <span id="vHasC2pa" class="font-medium text-slate-200"></span>
+              </div>
+              <div class="flex justify-between py-1.5 border-b border-slate-800">
+                <span class="text-slate-400">Signing Authority</span>
+                <span id="vIssuer" class="font-medium text-slate-200"></span>
+              </div>
+              <div class="flex justify-between py-1.5 border-b border-slate-800">
+                <span class="text-slate-400">Hash Binding</span>
+                <span id="vHashMatch" class="font-medium text-slate-200"></span>
+              </div>
+              <div class="flex justify-between py-1.5 border-b border-slate-800">
+                <span class="text-slate-400">Container Format</span>
+                <span id="vContainer" class="font-medium text-slate-200"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Track B: Video Forensics -->
+          <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
+            <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <i class="fa-solid fa-wave-square text-indigo-400"></i> Track B: Video Forensics Ensemble
+            </h3>
+            <div class="space-y-4 text-xs">
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-slate-400">Deepfake Score (fused)</span>
+                  <span id="vDeepfakeScore" class="font-bold text-slate-200"></span>
+                </div>
+                <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                  <div id="vDeepfakeBar" class="h-2 rounded-full bg-red-500" style="width: 0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-slate-400">Temporal Inconsistency (Optical Flow)</span>
+                  <span id="vTemporalScore" class="font-bold text-slate-200"></span>
+                </div>
+                <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                  <div id="vTemporalBar" class="h-2 rounded-full bg-orange-500" style="width: 0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-slate-400">Mean Frame Manipulation (SRM)</span>
+                  <span id="vManipScore" class="font-bold text-slate-200"></span>
+                </div>
+                <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                  <div id="vManipBar" class="h-2 rounded-full bg-yellow-500" style="width: 0%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-slate-400">Mean Frame Synthetic (FFT)</span>
+                  <span id="vSynthScore" class="font-bold text-slate-200"></span>
+                </div>
+                <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                  <div id="vSynthBar" class="h-2 rounded-full bg-indigo-500" style="width: 0%"></div>
+                </div>
+              </div>
+              <div class="pt-2 border-t border-slate-800 flex flex-wrap gap-3 text-slate-400 text-[11px]">
+                <span>Faces detected: <b id="vFaces" class="text-slate-300"></b></span>
+                <span>Frames analysed: <b id="vFramesAnalyzed" class="text-slate-300"></b></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contributing Signals -->
+          <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
+            <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+              <i class="fa-solid fa-list-check text-indigo-400"></i> Top Contributing Signals
+            </h3>
+            <div id="videoSignalsList" class="space-y-3"></div>
+          </div>
+
+          <!-- Merkle Ledger anchor -->
+          <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
+            <h3 class="text-sm font-semibold text-white mb-2 flex items-center gap-2">
+              <i class="fa-solid fa-link text-emerald-400"></i> Transparency Ledger
+            </h3>
+            <div id="videoLedgerInfo" class="text-[11px] text-slate-500"></div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+
   </main>
 
   <script>
-    // Automatically detect API base URL (supports running on localhost:8000 or opening file directly)
+    // -----------------------------------------------------------------------
+    // Global state
+    // -----------------------------------------------------------------------
     const API_BASE = (window.location.protocol === 'file:' || (window.location.port !== '8000' && window.location.port !== ''))
       ? 'http://127.0.0.1:8000'
       : '';
 
+    let currentMode = 'image'; // 'image' | 'video'
     let currentResult = null;
 
-    const fileInput = document.getElementById('fileInput');
-    const dropzone = document.getElementById('dropzone');
-    const loadingState = document.getElementById('loadingState');
-    const resultsContainer = document.getElementById('resultsContainer');
+    const fileInput     = document.getElementById('fileInput');
+    const videoInput    = document.getElementById('videoInput');
+    const dropzone      = document.getElementById('dropzone');
+    const loadingState  = document.getElementById('loadingState');
+    const resultsContainer      = document.getElementById('resultsContainer');
+    const videoResultsContainer = document.getElementById('videoResultsContainer');
     const opacitySlider = document.getElementById('opacitySlider');
     const heatmapOverlay = document.getElementById('heatmapOverlay');
+    const videoOpacitySlider = document.getElementById('videoOpacitySlider');
+    const worstFrameHeatmap  = document.getElementById('worstFrameHeatmap');
 
+    // -----------------------------------------------------------------------
+    // Mode switching
+    // -----------------------------------------------------------------------
+    function switchMode(mode) {
+      currentMode = mode;
+      const isVideo = mode === 'video';
+
+      document.getElementById('tabImage').className =
+        'flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold border transition-all duration-200 ' +
+        (isVideo ? 'tab-inactive' : 'tab-active');
+      document.getElementById('tabVideo').className =
+        'flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold border transition-all duration-200 ' +
+        (isVideo ? 'tab-active' : 'tab-inactive');
+
+      document.getElementById('uploadTitle').innerText   = isVideo ? 'Upload News Video to Verify' : 'Upload News Image to Verify';
+      document.getElementById('uploadSubtitle').innerText = isVideo
+        ? 'Accepts MP4, MOV, WebM (under 200MB) • C2PA + Frame Forensics + Temporal Analysis'
+        : 'Accepts JPEG, PNG, WebP (under 25MB) • Automatic C2PA & AI Forensics Inspection';
+      document.getElementById('uploadIcon').className  = isVideo ? 'fa-solid fa-video text-2xl' : 'fa-solid fa-cloud-arrow-up text-2xl';
+      document.getElementById('samplesSection').classList.toggle('hidden', isVideo);
+      document.getElementById('videoHint').classList.toggle('hidden', !isVideo);
+      document.getElementById('deepScanLabel').classList.toggle('hidden', isVideo);
+
+      // Hide any existing results when switching tabs
+      resultsContainer.classList.add('hidden');
+      videoResultsContainer.classList.add('hidden');
+
+      document.getElementById('loadingTitle').innerText    = isVideo
+        ? 'Extracting Frames & Running Video Forensics...'
+        : 'Verifying Cryptographic Credentials & Running AI Forensics...';
+      document.getElementById('loadingSubtitle').innerText = isVideo
+        ? 'C2PA manifest • Frame-level SRM + FFT • Optical flow temporal analysis • Face detection'
+        : 'Inspecting C2PA manifest • SRM noise residuals • 2D FFT spectral distribution';
+    }
+
+    function triggerFilePicker() {
+      if (currentMode === 'video') {
+        videoInput.click();
+      } else {
+        fileInput.click();
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Opacity sliders
+    // -----------------------------------------------------------------------
     opacitySlider.addEventListener('input', (e) => {
       heatmapOverlay.style.opacity = e.target.value / 100.0;
     });
-
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        handleUpload(e.target.files[0]);
-      }
+    videoOpacitySlider.addEventListener('input', (e) => {
+      worstFrameHeatmap.style.opacity = e.target.value / 100.0;
     });
 
+    // -----------------------------------------------------------------------
+    // File input listeners
+    // -----------------------------------------------------------------------
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) handleUpload(e.target.files[0]);
+    });
+    videoInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) handleVideoUpload(e.target.files[0]);
+    });
+
+    // -----------------------------------------------------------------------
+    // Drag-and-drop (routes to correct handler based on file type)
+    // -----------------------------------------------------------------------
     dropzone.addEventListener('dragover', (e) => {
       e.preventDefault();
       dropzone.classList.add('border-blue-500');
     });
-
     dropzone.addEventListener('dragleave', () => {
       dropzone.classList.remove('border-blue-500');
     });
-
     dropzone.addEventListener('drop', (e) => {
       e.preventDefault();
       dropzone.classList.remove('border-blue-500');
       if (e.dataTransfer.files.length > 0) {
-        handleUpload(e.dataTransfer.files[0]);
+        const f = e.dataTransfer.files[0];
+        const isVid = f.type.startsWith('video/');
+        if (isVid) { switchMode('video'); handleVideoUpload(f); }
+        else        { switchMode('image'); handleUpload(f); }
       }
     });
 
-    // Check backend health & populate sample buttons on page load
+    // -----------------------------------------------------------------------
+    // Sample buttons (image only)
+    // -----------------------------------------------------------------------
     async function initPage() {
       try {
         const resp = await fetch(`${API_BASE}/api/v1/samples`);
@@ -325,7 +625,6 @@
       const bar = document.getElementById('samplesBar');
       if (!bar) return;
       bar.innerHTML = '';
-
       samples.forEach(s => {
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -342,7 +641,7 @@
     async function loadAndVerifySample(filename, title) {
       loadingState.classList.remove('hidden');
       resultsContainer.classList.add('hidden');
-
+      videoResultsContainer.classList.add('hidden');
       try {
         const fileResp = await fetch(`${API_BASE}/api/v1/samples/${filename}`);
         if (!fileResp.ok) throw new Error(`Could not fetch sample ${filename}`);
@@ -355,9 +654,13 @@
       }
     }
 
+    // -----------------------------------------------------------------------
+    // IMAGE upload & render
+    // -----------------------------------------------------------------------
     async function handleUpload(file) {
       loadingState.classList.remove('hidden');
       resultsContainer.classList.add('hidden');
+      videoResultsContainer.classList.add('hidden');
 
       const formData = new FormData();
       formData.append('file', file);
@@ -365,22 +668,18 @@
       formData.append('deep_scan', deepScan);
 
       try {
-        const resp = await fetch(`${API_BASE}/api/v1/verify`, {
-          method: 'POST',
-          body: formData
-        });
+        const resp = await fetch(`${API_BASE}/api/v1/verify`, { method: 'POST', body: formData });
         if (!resp.ok) {
           const err = await resp.json();
           alert('Verification error: ' + (err.detail || 'Failed to verify file'));
           return;
         }
-
         const data = await resp.json();
         currentResult = data;
         renderResults(data, file);
       } catch (err) {
         alert(
-          'Network connection error: ' + err.message + 
+          'Network connection error: ' + err.message +
           '\n\nUnable to reach the NewsProof backend at ' + (API_BASE || window.location.origin) +
           '\nMake sure the backend server is running with:\n' +
           'uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000'
@@ -390,17 +689,49 @@
       }
     }
 
+    // -----------------------------------------------------------------------
+    // VIDEO upload & render
+    // -----------------------------------------------------------------------
+    async function handleVideoUpload(file) {
+      loadingState.classList.remove('hidden');
+      resultsContainer.classList.add('hidden');
+      videoResultsContainer.classList.add('hidden');
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const resp = await fetch(`${API_BASE}/api/v1/verify/video`, { method: 'POST', body: formData });
+        if (!resp.ok) {
+          const err = await resp.json();
+          alert('Video verification error: ' + (err.detail || 'Failed to verify video'));
+          return;
+        }
+        const data = await resp.json();
+        currentResult = data;
+        renderVideoResults(data);
+      } catch (err) {
+        alert(
+          'Network connection error: ' + err.message +
+          '\n\nUnable to reach the NewsProof backend at ' + (API_BASE || window.location.origin) +
+          '\nMake sure the backend server is running with:\n' +
+          'uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8000'
+        );
+      } finally {
+        loadingState.classList.add('hidden');
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // IMAGE results renderer (original, unchanged logic)
+    // -----------------------------------------------------------------------
     function renderResults(res, file) {
       resultsContainer.classList.remove('hidden');
 
-      // Set image source
       const reader = new FileReader();
-      reader.onload = (e) => {
-        document.getElementById('inspectedImage').src = e.target.result;
-      };
+      reader.onload = (e) => { document.getElementById('inspectedImage').src = e.target.result; };
       reader.readAsDataURL(file);
 
-      // Heatmap
       if (res.forensics.heatmap_base64) {
         heatmapOverlay.src = res.forensics.heatmap_base64;
         heatmapOverlay.classList.remove('hidden');
@@ -408,75 +739,70 @@
         heatmapOverlay.classList.add('hidden');
       }
 
-      // Verdict Banner styling
-      const banner = document.getElementById('verdictBanner');
+      const banner   = document.getElementById('verdictBanner');
       const iconCont = document.getElementById('verdictIconContainer');
-      const title = document.getElementById('verdictTitle');
-      const expl = document.getElementById('verdictExplanation');
-      const conf = document.getElementById('confidenceVal');
-      const c2paTag = document.getElementById('c2paTag');
+      const title    = document.getElementById('verdictTitle');
+      const expl     = document.getElementById('verdictExplanation');
+      const conf     = document.getElementById('confidenceVal');
+      const c2paTag  = document.getElementById('c2paTag');
 
       title.innerText = res.verdict;
-      expl.innerText = res.explanation;
-      conf.innerText = res.confidence_score.toFixed(1) + '%';
+      expl.innerText  = res.explanation;
+      conf.innerText  = res.confidence_score.toFixed(1) + '%';
 
-      // Colors by verdict
       let bgGrad = 'bg-slate-800 border-slate-700';
-      let icon = '<i class="fa-solid fa-check text-emerald-400"></i>';
 
       if (res.verdict === 'Verified Authentic') {
         bgGrad = 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
         iconCont.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-emerald-500/20 text-emerald-300';
-        c2paTag.innerText = 'C2PA Validated';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-emerald-500/20 text-emerald-300';
+        c2paTag.innerText  = 'C2PA Validated';
       } else if (res.verdict === 'Authentic - Edited (Declared)') {
         bgGrad = 'bg-teal-950/40 border-teal-500/50 text-teal-200';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-teal-500/20 text-teal-400 border border-teal-500/30';
         iconCont.innerHTML = '<i class="fa-solid fa-pen-ruler"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-teal-500/20 text-teal-300';
-        c2paTag.innerText = 'Declared Edits';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-teal-500/20 text-teal-300';
+        c2paTag.innerText  = 'Declared Edits';
       } else if (res.verdict === 'Likely Authentic') {
         bgGrad = 'bg-cyan-950/40 border-cyan-500/50 text-cyan-200';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30';
         iconCont.innerHTML = '<i class="fa-solid fa-shield"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-cyan-500/20 text-cyan-300';
-        c2paTag.innerText = 'Forensics Clean';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-cyan-500/20 text-cyan-300';
+        c2paTag.innerText  = 'Forensics Clean';
       } else if (res.verdict === 'Suspicious / Manipulated') {
         bgGrad = 'bg-red-950/40 border-red-500/50 text-red-200';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-red-500/20 text-red-400 border border-red-500/30';
         iconCont.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-red-500/20 text-red-300';
-        c2paTag.innerText = 'Tampering Detected';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-red-500/20 text-red-300';
+        c2paTag.innerText  = 'Tampering Detected';
       } else if (res.verdict === 'AI-Generated') {
         bgGrad = 'bg-indigo-950/40 border-indigo-500/50 text-indigo-200';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-indigo-500/20 text-indigo-400 border border-indigo-500/30';
         iconCont.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-indigo-500/20 text-indigo-300';
-        c2paTag.innerText = 'Synthetic Gen';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-indigo-500/20 text-indigo-300';
+        c2paTag.innerText  = 'Synthetic Gen';
       } else if (res.verdict === 'Provenance Broken') {
         bgGrad = 'bg-rose-950/40 border-rose-500/50 text-rose-200';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-rose-500/20 text-rose-400 border border-rose-500/30';
         iconCont.innerHTML = '<i class="fa-solid fa-link-slash"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-rose-500/20 text-rose-300';
-        c2paTag.innerText = 'Hash Mismatch';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-rose-500/20 text-rose-300';
+        c2paTag.innerText  = 'Hash Mismatch';
       } else if (res.verdict === 'Discrepancy: Requires Editorial Review') {
         bgGrad = 'bg-amber-950/40 border-amber-500/50 text-amber-200';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-amber-500/20 text-amber-400 border border-amber-500/30';
         iconCont.innerHTML = '<i class="fa-solid fa-scale-unbalanced"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-300';
-        c2paTag.innerText = 'Core Invariant Discrepancy';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-300';
+        c2paTag.innerText  = 'Core Invariant Discrepancy';
       } else {
         bgGrad = 'bg-slate-800 border-slate-700 text-slate-300';
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-slate-700 text-slate-400';
         iconCont.innerHTML = '<i class="fa-solid fa-question"></i>';
-        c2paTag.className = 'text-xs px-2 py-0.5 rounded font-medium bg-slate-700 text-slate-300';
-        c2paTag.innerText = 'Degraded / High Variance';
+        c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-slate-700 text-slate-300';
+        c2paTag.innerText  = 'Degraded / High Variance';
       }
-
       banner.className = `rounded-2xl p-6 border shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 ${bgGrad}`;
 
-      // Untrusted warning card
       const warnCard = document.getElementById('untrustedWarningCard');
       const warnText = document.getElementById('untrustedWarningText');
       if (res.provenance.untrusted_warning) {
@@ -486,10 +812,9 @@
         warnCard.classList.add('hidden');
       }
 
-      // Track A card
-      document.getElementById('hasC2paVal').innerText = res.provenance.has_c2pa ? 'Present' : 'Not Found';
-      document.getElementById('issuerVal').innerText = res.provenance.issuer || 'N/A';
-      document.getElementById('hashMatchVal').innerText = res.provenance.hash_match === null ? 'N/A' : (res.provenance.hash_match ? 'Match Verified' : 'MISMATCH (Tampered)');
+      document.getElementById('hasC2paVal').innerText      = res.provenance.has_c2pa ? 'Present' : 'Not Found';
+      document.getElementById('issuerVal').innerText       = res.provenance.issuer || 'N/A';
+      document.getElementById('hashMatchVal').innerText    = res.provenance.hash_match === null ? 'N/A' : (res.provenance.hash_match ? 'Match Verified' : 'MISMATCH (Tampered)');
       document.getElementById('declaredActionsVal').innerText = res.provenance.declared_actions.length > 0 ? res.provenance.declared_actions.join(', ') : 'None';
 
       const c2paBadge = document.getElementById('c2paStatusBadge');
@@ -504,25 +829,19 @@
         c2paBadge.innerText = 'No Passport';
       }
 
-      // Track B metrics
       document.getElementById('manipScoreVal').innerText = (res.forensics.manipulation_score * 100).toFixed(1) + '%';
-      document.getElementById('manipBar').style.width = (res.forensics.manipulation_score * 100) + '%';
-
+      document.getElementById('manipBar').style.width    = (res.forensics.manipulation_score * 100) + '%';
       document.getElementById('synthScoreVal').innerText = (res.forensics.synthetic_score * 100).toFixed(1) + '%';
-      document.getElementById('synthBar').style.width = (res.forensics.synthetic_score * 100) + '%';
-
-      document.getElementById('compScoreVal').innerText = (res.forensics.compression_anomaly_score * 100).toFixed(1) + '%';
-      document.getElementById('compBar').style.width = (res.forensics.compression_anomaly_score * 100) + '%';
-
+      document.getElementById('synthBar').style.width    = (res.forensics.synthetic_score * 100) + '%';
+      document.getElementById('compScoreVal').innerText  = (res.forensics.compression_anomaly_score * 100).toFixed(1) + '%';
+      document.getElementById('compBar').style.width     = (res.forensics.compression_anomaly_score * 100) + '%';
       document.getElementById('uncertaintyVal').innerText = res.forensics.uncertainty_variance.toFixed(4);
-      document.getElementById('prnuVal').innerText = res.forensics.prnu_score !== null ? res.forensics.prnu_score.toFixed(3) : 'N/A';
+      document.getElementById('prnuVal').innerText        = res.forensics.prnu_score !== null ? res.forensics.prnu_score.toFixed(3) : 'N/A';
 
-      // Dimensions
       if (res.forensics.dimensions) {
-        document.getElementById('dimensionsText').innerText = `${res.forensics.dimensions[0]} x ${res.forensics.dimensions[1]} px &bull; SHA-256: ${res.sha256.substring(0, 12)}...`;
+        document.getElementById('dimensionsText').innerText = `${res.forensics.dimensions[0]} x ${res.forensics.dimensions[1]} px • SHA-256: ${res.sha256.substring(0, 12)}...`;
       }
 
-      // Signals
       const sigList = document.getElementById('signalsList');
       sigList.innerHTML = '';
       res.top_signals.forEach(sig => {
@@ -541,7 +860,6 @@
         sigList.appendChild(item);
       });
 
-      // Export Buttons
       document.getElementById('downloadPdfBtn').onclick = () => {
         window.open(`${API_BASE}/api/v1/report/${res.asset_id}/pdf`, '_blank');
       };
@@ -554,10 +872,183 @@
       }
     }
 
-    // Trigger on load
+    // -----------------------------------------------------------------------
+    // VIDEO results renderer
+    // -----------------------------------------------------------------------
+    function verdictStyle(verdict) {
+      const map = {
+        'Verified Authentic':                  { bg: 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200', icon: 'fa-circle-check', iconCls: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30', tag: 'C2PA Validated',              tagCls: 'bg-emerald-500/20 text-emerald-300' },
+        'Authentic - Edited (Declared)':       { bg: 'bg-teal-950/40 border-teal-500/50 text-teal-200',         icon: 'fa-pen-ruler',    iconCls: 'bg-teal-500/20 text-teal-400 border-teal-500/30',         tag: 'Declared Edits',               tagCls: 'bg-teal-500/20 text-teal-300' },
+        'Likely Authentic':                    { bg: 'bg-cyan-950/40 border-cyan-500/50 text-cyan-200',          icon: 'fa-shield',       iconCls: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',          tag: 'Forensics Clean',              tagCls: 'bg-cyan-500/20 text-cyan-300' },
+        'Suspicious / Manipulated':            { bg: 'bg-red-950/40 border-red-500/50 text-red-200',            icon: 'fa-triangle-exclamation', iconCls: 'bg-red-500/20 text-red-400 border-red-500/30', tag: 'Deepfake / Tampering',         tagCls: 'bg-red-500/20 text-red-300' },
+        'AI-Generated':                        { bg: 'bg-indigo-950/40 border-indigo-500/50 text-indigo-200',   icon: 'fa-wand-magic-sparkles', iconCls: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30', tag: 'Synthetic Gen',         tagCls: 'bg-indigo-500/20 text-indigo-300' },
+        'Provenance Broken':                   { bg: 'bg-rose-950/40 border-rose-500/50 text-rose-200',         icon: 'fa-link-slash',   iconCls: 'bg-rose-500/20 text-rose-400 border-rose-500/30',         tag: 'Hash Mismatch',                tagCls: 'bg-rose-500/20 text-rose-300' },
+        'Discrepancy: Requires Editorial Review': { bg: 'bg-amber-950/40 border-amber-500/50 text-amber-200', icon: 'fa-scale-unbalanced', iconCls: 'bg-amber-500/20 text-amber-400 border-amber-500/30', tag: 'Discrepancy',                  tagCls: 'bg-amber-500/20 text-amber-300' },
+      };
+      return map[verdict] || { bg: 'bg-slate-800 border-slate-700 text-slate-300', icon: 'fa-question', iconCls: 'bg-slate-700 text-slate-400 border-slate-700', tag: 'Unverifiable', tagCls: 'bg-slate-700 text-slate-300' };
+    }
+
+    function renderVideoResults(res) {
+      videoResultsContainer.classList.remove('hidden');
+
+      // --- Verdict banner ---
+      const style = verdictStyle(res.verdict);
+      document.getElementById('videoVerdictBanner').className =
+        `rounded-2xl p-6 border shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 ${style.bg}`;
+      const iconEl = document.getElementById('videoVerdictIcon');
+      iconEl.className = `w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg border ${style.iconCls}`;
+      iconEl.innerHTML = `<i class="fa-solid ${style.icon}"></i>`;
+      const tagEl = document.getElementById('videoC2paTag');
+      tagEl.className = `text-xs px-2 py-0.5 rounded font-medium ${style.tagCls}`;
+      tagEl.innerText = style.tag;
+
+      document.getElementById('videoVerdictTitle').innerText      = res.verdict;
+      document.getElementById('videoVerdictExplanation').innerText = res.explanation;
+      document.getElementById('videoConfidenceVal').innerText     = res.confidence_score.toFixed(1) + '%';
+
+      // Untrusted warning
+      if (res.provenance.untrusted_warning) {
+        document.getElementById('videoUntrustedWarning').classList.remove('hidden');
+        document.getElementById('videoUntrustedText').innerText = res.provenance.untrusted_warning;
+      } else {
+        document.getElementById('videoUntrustedWarning').classList.add('hidden');
+      }
+
+      // --- Metadata strip ---
+      document.getElementById('vmDuration').innerText = res.metadata.duration_sec.toFixed(1);
+      document.getElementById('vmFps').innerText      = res.metadata.fps.toFixed(2);
+      document.getElementById('vmFrames').innerText   = res.metadata.frame_count.toLocaleString();
+      document.getElementById('vmRes').innerText      = `${res.metadata.width} × ${res.metadata.height} px`;
+      document.getElementById('vmCodec').innerText    = res.metadata.codec || 'N/A';
+      document.getElementById('vmSha').innerText      = res.sha256.substring(0, 16) + '...';
+
+      // --- Worst frame ---
+      const worstImg    = document.getElementById('worstFrameImg');
+      const worstTs     = document.getElementById('worstFrameTs');
+      if (res.forensics.worst_frame_thumbnail_base64) {
+        worstImg.src = res.forensics.worst_frame_thumbnail_base64;
+        worstImg.classList.remove('hidden');
+      }
+      if (res.forensics.worst_frame_heatmap_base64) {
+        worstFrameHeatmap.src = res.forensics.worst_frame_heatmap_base64;
+        worstFrameHeatmap.classList.remove('hidden');
+      } else {
+        worstFrameHeatmap.classList.add('hidden');
+      }
+      worstTs.innerText = res.forensics.worst_frame_timestamp_sec !== null
+        ? `t = ${res.forensics.worst_frame_timestamp_sec.toFixed(2)}s`
+        : 'No frames analysed';
+
+      // --- Suspicious frame strip ---
+      const frames   = res.forensics.suspicious_frames || [];
+      const strip    = document.getElementById('frameStrip');
+      const stripEmpty = document.getElementById('frameStripEmpty');
+      const countEl  = document.getElementById('suspiciousFrameCount');
+      countEl.innerText = `${frames.length} suspicious frame${frames.length !== 1 ? 's' : ''}`;
+
+      if (frames.length === 0) {
+        strip.classList.add('hidden');
+        stripEmpty.classList.remove('hidden');
+      } else {
+        stripEmpty.classList.add('hidden');
+        strip.classList.remove('hidden');
+        strip.innerHTML = '';
+        frames.forEach(sf => {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'flex-shrink-0 w-40 relative group cursor-pointer';
+
+          const scoreColor = sf.manipulation_score > 0.6 || sf.synthetic_score > 0.6
+            ? 'border-red-500/70' : 'border-orange-500/50';
+
+          wrapper.innerHTML = `
+            <div class="relative rounded-xl overflow-hidden border ${scoreColor} bg-slate-950">
+              <img src="${sf.thumbnail_base64 || ''}" class="w-full h-24 object-cover" alt="Frame at ${sf.timestamp_sec}s">
+              ${sf.face_detected ? '<span class="absolute top-1 right-1 bg-orange-500/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">FACE</span>' : ''}
+            </div>
+            <div class="mt-1.5 text-[10px] text-slate-400">
+              <div class="flex justify-between">
+                <span>t=${sf.timestamp_sec.toFixed(1)}s</span>
+                <span class="text-red-400 font-bold">${(Math.max(sf.manipulation_score, sf.synthetic_score) * 100).toFixed(0)}%</span>
+              </div>
+              <div class="flex justify-between text-slate-500">
+                <span>Manip: ${(sf.manipulation_score * 100).toFixed(0)}%</span>
+                <span>Synth: ${(sf.synthetic_score * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+          `;
+          // Click to show this frame in the worst-frame inspector
+          wrapper.onclick = () => {
+            if (sf.thumbnail_base64) worstImg.src = sf.thumbnail_base64;
+            if (sf.heatmap_base64)   { worstFrameHeatmap.src = sf.heatmap_base64; worstFrameHeatmap.classList.remove('hidden'); }
+            worstTs.innerText = `t = ${sf.timestamp_sec.toFixed(2)}s`;
+            document.getElementById('worstFrameContainer').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          };
+          strip.appendChild(wrapper);
+        });
+      }
+
+      // --- Track A: Provenance ---
+      document.getElementById('vHasC2pa').innerText   = res.provenance.has_c2pa ? 'Present' : 'Not Found';
+      document.getElementById('vIssuer').innerText    = res.provenance.issuer || 'N/A';
+      document.getElementById('vHashMatch').innerText = res.provenance.hash_match === null ? 'N/A' : (res.provenance.hash_match ? 'Match Verified' : 'MISMATCH');
+      document.getElementById('vContainer').innerText = res.provenance.container_format || 'N/A';
+
+      const vBadge = document.getElementById('videoC2paBadge');
+      if (res.provenance.is_valid && res.provenance.is_trusted) {
+        vBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+        vBadge.innerText = 'Trusted Root';
+      } else if (res.provenance.has_c2pa && !res.provenance.is_trusted) {
+        vBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30';
+        vBadge.innerText = 'Untrusted Authority';
+      } else {
+        vBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-700 text-slate-400';
+        vBadge.innerText = 'No Passport';
+      }
+
+      // --- Track B: Score bars ---
+      const setBar = (scoreId, barId, score) => {
+        document.getElementById(scoreId).innerText = (score * 100).toFixed(1) + '%';
+        document.getElementById(barId).style.width = (score * 100) + '%';
+      };
+      setBar('vDeepfakeScore', 'vDeepfakeBar', res.forensics.deepfake_score);
+      setBar('vTemporalScore', 'vTemporalBar', res.forensics.temporal_inconsistency_score);
+      setBar('vManipScore',    'vManipBar',    res.forensics.mean_manipulation_score);
+      setBar('vSynthScore',    'vSynthBar',    res.forensics.mean_synthetic_score);
+
+      document.getElementById('vFaces').innerText         = res.forensics.face_detected_in_video ? 'Yes' : 'No';
+      document.getElementById('vFramesAnalyzed').innerText = `${res.forensics.frames_analyzed} / ${res.forensics.frame_count_total}`;
+
+      // --- Signals ---
+      const sigList = document.getElementById('videoSignalsList');
+      sigList.innerHTML = '';
+      (res.top_signals || []).forEach(sig => {
+        const item = document.createElement('div');
+        item.className = 'p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs flex justify-between items-start';
+        item.innerHTML = `
+          <div>
+            <div class="font-semibold text-slate-200 flex items-center gap-2">
+              <span>${sig.name}</span>
+              <span class="text-[10px] px-1.5 rounded bg-slate-800 text-slate-400">Weight ${(sig.weight * 100).toFixed(0)}%</span>
+            </div>
+            <p class="text-slate-400 mt-0.5 text-[11px]">${sig.description}</p>
+          </div>
+          <span class="font-bold text-slate-300 ml-4">${(sig.score * 100).toFixed(1)}%</span>
+        `;
+        sigList.appendChild(item);
+      });
+
+      // --- Ledger ---
+      if (res.ledger) {
+        document.getElementById('videoLedgerInfo').innerHTML =
+          `Anchored in Merkle Log &bull; Root: <code class="text-indigo-400">${res.ledger.merkle_root.substring(0, 16)}...</code><br>` +
+          `Leaf: <code class="text-indigo-400">${res.ledger.leaf_hash.substring(0, 16)}...</code> &bull; ${res.ledger.timestamp}`;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Boot
+    // -----------------------------------------------------------------------
     initPage();
-  </script>
   </script>
 </body>
 </html>
-

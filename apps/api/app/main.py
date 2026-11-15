@@ -1,6 +1,7 @@
 import os
 import uuid
 import io
+import tempfile
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,15 +16,25 @@ from apps.api.app.schemas.verdict import (
     ForensicsDetails,
     ContributingSignal
 )
-from engines.crypto.hasher import compute_sha256, compute_phash, inspect_image_metadata
+from apps.api.app.schemas.video_verdict import (
+    VideoVerificationResult,
+    VideoForensicsDetails,
+    VideoProvenanceDetails,
+    VideoMetadata,
+    VideoLedgerReference,
+    SuspiciousFrame,
+)
+from engines.crypto.hasher import compute_sha256, compute_phash, inspect_image_metadata, inspect_video_metadata
 from engines.crypto.c2pa_validator import C2PAValidator
 from engines.crypto.durable_registry import default_durable_registry
 from engines.forensics.manipulation.localizer import ManipulationLocalizer
 from engines.forensics.synthetic.detector import AIGeneratedImageDetector
 from engines.forensics.noise_compression.compression_forensics import CompressionForensicsAnalyzer
+from engines.forensics.deepfake_video import VideoForensicsDetector
 from engines.fusion.rules_engine import FusionRulesEngine
 from engines.fusion.merkle_ledger import default_transparency_log
 from engines.fusion.report_generator import ReportGenerator
+
 
 app = FastAPI(
     title="NewsProof API",
@@ -46,9 +57,11 @@ synthetic_detector = AIGeneratedImageDetector()
 compression_analyzer = CompressionForensicsAnalyzer()
 fusion_engine = FusionRulesEngine()
 report_generator = ReportGenerator()
+video_detector = VideoForensicsDetector(sample_fps=1.0)
 
-# In-memory store for verification results
+# In-memory stores for verification results
 results_store: dict[str, VerificationResult] = {}
+video_results_store: dict[str, VideoVerificationResult] = {}
 
 SAMPLES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "test_samples"))
 
@@ -292,3 +305,163 @@ def get_inclusion_proof(index: int):
         }
     except IndexError:
         raise HTTPException(status_code=404, detail="Index out of range in ledger.")
+
+
+# ---------------------------------------------------------------------------
+# Video Verification Endpoints
+# ---------------------------------------------------------------------------
+
+VIDEO_ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm"}
+VIDEO_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
+
+
+@app.post("/api/v1/verify/video", response_model=VideoVerificationResult)
+async def verify_video(
+    file: UploadFile = File(...),
+):
+    """
+    Accepts an MP4, MOV, or WebM video file and runs the full two-track
+    forensic pipeline:
+      Track A – C2PA cryptographic provenance (if manifest present)
+      Track B – Frame-level AI forensics (reuses image engines on frames)
+               + Temporal optical flow analysis
+               + Haar face detection for deepfake focus
+    Returns a VideoVerificationResult with verdict, confidence, signals,
+    per-frame suspicious thumbnails, and a Merkle ledger anchor.
+    """
+    try:
+        # --- File validation ---
+        raw_bytes = await file.read()
+        if len(raw_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded video file is empty.")
+        if len(raw_bytes) > VIDEO_MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Video file exceeds maximum allowed size ({VIDEO_MAX_BYTES // (1024*1024)} MB)."
+            )
+
+        filename = file.filename or "video.mp4"
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in VIDEO_ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported video format '{ext}'. Accepted: MP4, MOV, WebM."
+            )
+
+        # --- Write to temp file (cv2.VideoCapture requires a file path) ---
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(raw_bytes)
+            tmp_path = tmp.name
+
+        try:
+            # --- SHA-256 hash ---
+            sha256_hash = compute_sha256(raw_bytes)
+
+            # --- Container metadata ---
+            raw_meta = inspect_video_metadata(tmp_path)
+            video_meta = VideoMetadata(
+                duration_sec=raw_meta["duration_sec"],
+                fps=raw_meta["fps"],
+                frame_count=raw_meta["frame_count"],
+                width=raw_meta["width"],
+                height=raw_meta["height"],
+                codec=raw_meta["codec"],
+                byte_size=len(raw_bytes),
+            )
+
+            # Basic sanity: video must have at least 1 frame and non-zero dimensions
+            if video_meta.frame_count == 0 or video_meta.width == 0 or video_meta.height == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Video file appears to be corrupt or unreadable (zero frames or dimensions)."
+                )
+
+            # --- Track A: C2PA Provenance ---
+            provenance = c2pa_validator.validate_video_bytes(raw_bytes, extension=ext)
+
+            # --- Track B: Video Forensics ---
+            raw_forensics = video_detector.analyze(tmp_path)
+
+        finally:
+            # Always clean up the temp file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+        # --- Build VideoForensicsDetails ---
+        suspicious_frames = [
+            SuspiciousFrame(
+                frame_index=sf["frame_index"],
+                timestamp_sec=sf["timestamp_sec"],
+                manipulation_score=sf["manipulation_score"],
+                synthetic_score=sf["synthetic_score"],
+                face_detected=sf["face_detected"],
+                heatmap_base64=sf.get("heatmap_base64"),
+                thumbnail_base64=sf.get("thumbnail_base64"),
+            )
+            for sf in raw_forensics["suspicious_frames"]
+        ]
+
+        forensics = VideoForensicsDetails(
+            mean_manipulation_score=raw_forensics["mean_manipulation_score"],
+            mean_synthetic_score=raw_forensics["mean_synthetic_score"],
+            deepfake_score=raw_forensics["deepfake_score"],
+            temporal_inconsistency_score=raw_forensics["temporal_inconsistency_score"],
+            face_detected_in_video=raw_forensics["face_detected_in_video"],
+            frame_count_total=raw_forensics["frame_count_total"],
+            frames_analyzed=raw_forensics["frames_analyzed"],
+            sample_fps=raw_forensics["sample_fps"],
+            suspicious_frames=suspicious_frames,
+            worst_frame_heatmap_base64=raw_forensics.get("worst_frame_heatmap_base64"),
+            worst_frame_thumbnail_base64=raw_forensics.get("worst_frame_thumbnail_base64"),
+            worst_frame_timestamp_sec=raw_forensics.get("worst_frame_timestamp_sec"),
+        )
+
+        # --- Decision & Fusion ---
+        verdict, confidence, explanation, signals = fusion_engine.evaluate_video(
+            provenance, forensics
+        )
+
+        # --- Merkle Transparency Log ---
+        ledger_entry = default_transparency_log.record_verdict(
+            asset_sha256=sha256_hash,
+            verdict=verdict.value,
+            confidence_score=confidence,
+        )
+        ledger_ref = VideoLedgerReference(
+            leaf_hash=ledger_entry["leaf_hash"],
+            merkle_root=ledger_entry["merkle_root"],
+            tree_index=ledger_entry["index"],
+            timestamp=ledger_entry["timestamp"],
+            model_versions_hash=ledger_entry["model_versions_hash"],
+        )
+
+        asset_id = str(uuid.uuid4())
+        result = VideoVerificationResult(
+            asset_id=asset_id,
+            sha256=sha256_hash,
+            media_type="video",
+            verdict=verdict,
+            confidence_score=confidence,
+            explanation=explanation,
+            top_signals=signals,
+            metadata=video_meta,
+            provenance=provenance,
+            forensics=forensics,
+            ledger=ledger_ref,
+        )
+
+        video_results_store[asset_id] = result
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal video verification error: {str(e)}")
+
+
+@app.get("/api/v1/result/video/{asset_id}", response_model=VideoVerificationResult)
+def get_video_result(asset_id: str):
+    """Retrieves a previously computed video verification result by asset ID."""
+    if asset_id not in video_results_store:
+        raise HTTPException(status_code=404, detail="Video verification result not found.")
+    return video_results_store[asset_id]

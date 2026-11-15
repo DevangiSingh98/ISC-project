@@ -46,6 +46,36 @@ def hamming_distance(hex_hash1: str, hex_hash2: str) -> int:
     xor = val1 ^ val2
     return bin(xor).count("1")
 
+def inspect_video_metadata(video_path: str) -> Dict[str, Any]:
+    """
+    Extracts container-level metadata from a video file using cv2.VideoCapture.
+    Returns duration, fps, frame_count, resolution, and codec.
+    Safe to call before frame extraction; does not retain the capture object.
+    """
+    import cv2 as _cv2
+    cap = _cv2.VideoCapture(video_path)
+    try:
+        fps = float(cap.get(_cv2.CAP_PROP_FPS) or 0.0)
+        frame_count = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0)
+        width = int(cap.get(_cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        height = int(cap.get(_cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        fourcc_int = int(cap.get(_cv2.CAP_PROP_FOURCC))
+        # Decode FourCC integer to 4-character string
+        codec = "".join([chr((fourcc_int >> (8 * i)) & 0xFF) for i in range(4)]).strip("\x00")
+        duration_sec = (frame_count / fps) if fps > 0 else 0.0
+    finally:
+        cap.release()
+
+    return {
+        "duration_sec": round(duration_sec, 3),
+        "fps": round(fps, 3),
+        "frame_count": frame_count,
+        "width": width,
+        "height": height,
+        "codec": codec or "UNKNOWN",
+    }
+
+
 def inspect_image_metadata(image: Image.Image, raw_bytes: bytes) -> Dict[str, Any]:
     """Extracts format, dimensions, EXIF data, and assesses degradation."""
     width, height = image.size
