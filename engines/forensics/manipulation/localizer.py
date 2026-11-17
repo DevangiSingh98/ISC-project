@@ -162,16 +162,27 @@ class ManipulationLocalizer:
             else:
                 global_score = min(float(0.28 + (cluster_ratio - 0.25) * 2.0), 0.45)
         else:
-            # For natural photographs:
-            # - cluster_ratio < 0.035 (incidental noise / normal scene texture): score 0.0 to 0.28
-            # - cluster_ratio 0.035 to 0.055 (mild / localized anomaly transition): score 0.28 to 0.63
-            # - cluster_ratio >= 0.055 (significant foreign patch >= 5.5%): score 0.63 to 0.98
-            if cluster_ratio < 0.035:
-                global_score = float(np.clip(cluster_ratio / 0.035 * 0.28, 0.0, 0.28))
-            elif cluster_ratio < 0.055:
-                global_score = float(0.28 + (cluster_ratio - 0.035) / 0.020 * 0.35)
+            # Analyze anomaly clustering: distinguish a single concentrated foreign patch (splicing)
+            # from diffuse natural scene textures (crowds of people, bookshelves, trees, stadium seating, cityscapes).
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(clusters)
+            areas = stats[1:, cv2.CC_STAT_AREA] if num_labels > 1 else [0]
+            max_comp_ratio = float(np.max(areas) if len(areas) > 0 else 0) / float(max(total_valid, 1))
+            num_comps = num_labels - 1
+
+            # Diffuse scene texture has dozens of small disconnected clusters with no single dominant foreign patch
+            is_diffuse = (num_comps > 25 and max_comp_ratio < 0.035) or (num_comps > 40 and max_comp_ratio < 0.045)
+            self.last_is_diffuse = is_diffuse
+            self.last_max_comp_ratio = max_comp_ratio
+
+            if is_diffuse:
+                # Natural distributed scene complexity across the frame remains clean (< 0.28)
+                global_score = min(0.28, float(cluster_ratio * 2.5))
             else:
-                global_score = float(np.clip(0.63 + (cluster_ratio - 0.055) * 5.0, 0.63, 0.98))
+                # Concentrated localized anomaly (splicing / foreign insertion)
+                if cluster_ratio < 0.050:
+                    global_score = float(cluster_ratio / 0.050 * 0.28)
+                else:
+                    global_score = float(np.clip(0.55 + (cluster_ratio - 0.050) * 8.0, 0.55, 0.98))
 
         # Create RGBA heatmap overlay for display
         heatmap_color = cv2.applyColorMap((norm_map * 255).astype(np.uint8), cv2.COLORMAP_JET)
