@@ -65,13 +65,13 @@ def create_sample_images():
     # 5. Spliced / Manipulated Image
     manip_img = auth_img.copy()
     np.random.seed(99)
-    foreign_patch = np.zeros((100, 100, 3), dtype=np.uint8)
+    foreign_patch = np.zeros((130, 130, 3), dtype=np.uint8)
     for c in range(3):
-        foreign_patch[:, :, c] = np.random.normal(210, 45, (100, 100)).clip(0, 255).astype(np.uint8)
+        foreign_patch[:, :, c] = np.random.normal(210, 50, (130, 130)).clip(0, 255).astype(np.uint8)
     foreign_pil = Image.fromarray(foreign_patch)
-    manip_img.paste(foreign_pil, (150, 90))
+    manip_img.paste(foreign_pil, (135, 85))
     spliced_path = os.path.join(samples_dir, "spliced_manipulated.jpg")
-    manip_img.save(spliced_path, "JPEG", quality=85)
+    manip_img.save(spliced_path, "JPEG", quality=88)
     print(f"Created {spliced_path}")
 
     # 6. C2PA Discrepancy (Core Invariant test sample)
@@ -88,12 +88,13 @@ def create_sample_images():
     # 7. AI Synthetic Diffusion Image
     np.random.seed(202)
     y, x = np.ogrid[:300, :400]
-    checker = np.sin(x * np.pi / 2.0) * np.sin(y * np.pi / 2.0)
-    synth_noise = np.random.normal(128, 10, (300, 400))
-    synth_arr = np.clip(synth_noise + checker * 45.0, 0, 255).astype(np.uint8)
+    g1 = np.sin(x * np.pi / 4.0) * np.sin(y * np.pi / 4.0)
+    g2 = np.sin(x * np.pi / 8.0) * np.sin(y * np.pi / 8.0)
+    synth_noise = np.random.normal(128, 4, (300, 400))
+    synth_arr = np.clip(synth_noise + g1 * 45.0 + g2 * 35.0, 0, 255).astype(np.uint8)
     synth_img = Image.fromarray(np.dstack([synth_arr, synth_arr, synth_arr]))
     synth_path = os.path.join(samples_dir, "ai_synthetic_diffusion.jpg")
-    synth_img.save(synth_path, "JPEG", quality=90)
+    synth_img.save(synth_path, "PNG")
     print(f"Created {synth_path}")
 
     print("All sample media generated successfully!")

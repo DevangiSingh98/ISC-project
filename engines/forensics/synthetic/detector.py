@@ -59,7 +59,8 @@ class SpectralFFTBranch:
         spike_ratio = float(min(1.0, spikes / 25.0))
 
         # Combined spectral synthetic score
-        spectral_score = float(np.clip(power_law_deviation * 2.5 + spike_ratio * 0.5, 0.0, 1.0))
+        # Spikes in outer quadrants indicate periodic deconvolution/upsampling lattice artifacts
+        spectral_score = float(np.clip(power_law_deviation * 2.5 + spike_ratio * 0.55, 0.0, 1.0))
 
         return spectral_score, {
             "power_law_deviation": power_law_deviation,
@@ -157,7 +158,10 @@ class AIGeneratedImageDetector:
 
         # Dual-branch fusion
         # Spectral frequency artifacts are especially reliable across unseen generators
-        combined_score = 0.55 * spectral_score + 0.45 * spatial_mean
+        if spectral_score >= 0.50:
+            combined_score = max(spectral_score, 0.55 * spectral_score + 0.45 * spatial_mean)
+        else:
+            combined_score = 0.55 * spectral_score + 0.45 * spatial_mean
         if dire_score is not None:
             combined_score = 0.7 * combined_score + 0.3 * dire_score
 

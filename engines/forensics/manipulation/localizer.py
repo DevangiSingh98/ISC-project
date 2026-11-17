@@ -75,15 +75,23 @@ class ManipulationLocalizer:
         self.last_flat_ratio = flat_ratio
 
         # 3. Compute image gradients for structural edge attenuation
-        gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-        gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-        grad_mag = np.sqrt(gx**2 + gy**2)
+        # Use Gaussian-smoothed gradient to capture structural contours (tents, clothing folds, faces)
+        blur = cv2.GaussianBlur(gray, (5, 5), 1.5)
+        bx = cv2.Sobel(blur, cv2.CV_32F, 1, 0, ksize=3)
+        by = cv2.Sobel(blur, cv2.CV_32F, 0, 1, ksize=3)
+        smooth_grad = np.sqrt(bx**2 + by**2)
+
+        # Attenuate structural edges across all photographs so natural texture
+        # does not contaminate sensor noise statistics
+        gamma = 12.0 if not is_doc_screenshot else 20.0
+        attenuation = 1.0 / (1.0 + (smooth_grad / gamma) ** 1.8)
+        atten_noise = noise_res * attenuation
 
         if is_doc_screenshot:
             # Mask out flat canvas and high-contrast font glyph strokes
             kernel_font = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
             dilated_flat = cv2.dilate(flat_canvas.astype(np.uint8), kernel_font) > 0
-            text_or_flat = flat_canvas | (dilated_flat & (grad_mag > 20))
+            text_or_flat = flat_canvas | (dilated_flat & (smooth_grad > 20))
             valid_pixels = ~text_or_flat
 
             # For dense document screenshots (flat_ratio > 0.5), also mask layout boundaries:
@@ -104,8 +112,8 @@ class ManipulationLocalizer:
 
         # 4. Local noise inconsistency: sliding window standard deviation
         kernel_size = 15
-        mean = cv2.blur(noise_res, (kernel_size, kernel_size))
-        sq_mean = cv2.blur(noise_res ** 2, (kernel_size, kernel_size))
+        mean = cv2.blur(atten_noise, (kernel_size, kernel_size))
+        sq_mean = cv2.blur(atten_noise ** 2, (kernel_size, kernel_size))
         variance = np.maximum(sq_mean - mean ** 2, 0)
         local_std = np.sqrt(variance)
 
@@ -120,23 +128,14 @@ class ManipulationLocalizer:
         valid_std = local_std[valid_pixels]
         global_median = float(np.median(valid_std))
         global_mad = float(np.median(np.abs(valid_std - global_median)))
-        global_mad = max(global_mad, 0.8) # Sensor noise floor prevents division by near-zero!
+        global_mad = max(global_mad, 0.4) # Sensor noise floor prevents division by near-zero!
 
         z_scores = np.zeros((h, w), dtype=np.float32)
         z_scores[valid_pixels] = np.abs(local_std[valid_pixels] - global_median) / global_mad
 
-        # Combine noise anomaly and boundary gradient
-        if is_doc_screenshot:
-            raw_anomaly = z_scores
-        else:
-            edges = cv2.Canny(gray.astype(np.uint8), 50, 150).astype(np.float32) / 255.0
-            edge_density = cv2.GaussianBlur(edges, (21, 21), 5)
-            raw_anomaly = z_scores * 0.7 + edge_density * 3.0 * 0.3
-
         # Clustered anomaly detection: morphological opening eliminates isolated edge artifacts.
-        # For doc screenshots, require larger coherent clusters (32x32) to suppress ad-boundary noise.
         z_threshold = 2.8
-        min_cluster_kernel = 9 if not is_doc_screenshot else 16  # stricter for doc screenshots
+        min_cluster_kernel = 9 if not is_doc_screenshot else 16
         high_z = (z_scores > z_threshold).astype(np.uint8)
         kernel_cl = cv2.getStructuringElement(cv2.MORPH_RECT, (min_cluster_kernel, min_cluster_kernel))
         clusters = cv2.morphologyEx(high_z, cv2.MORPH_OPEN, kernel_cl)
@@ -148,7 +147,7 @@ class ManipulationLocalizer:
 
         # Smooth and scale to [0, 1] probability map for heatmap visualization
         smoothed = cv2.GaussianBlur(z_scores, (11, 11), 3)
-        norm_map = 1.0 / (1.0 + np.exp(-(smoothed - 2.8)))
+        norm_map = 1.0 / (1.0 + np.exp(-(smoothed - z_threshold)))
         norm_map[text_or_flat] = 0.0 # Suppress flat canvas & typography in heatmap overlay
 
         # Calculate cluster ratio of valid photographic pixels
@@ -156,21 +155,23 @@ class ManipulationLocalizer:
         cluster_ratio = float(np.sum(clusters)) / float(max(total_valid, 1))
         self.last_cluster_ratio = cluster_ratio
 
-        # Manipulation score driven by contiguous tamper cluster area
-        if cluster_ratio < 0.015:
-            global_score = float(np.clip(cluster_ratio * 15.0, 0.0, 0.30))
-        else:
-            global_score = float(np.clip(0.52 + cluster_ratio * 4.5, 0.52, 0.98))
-
-        # Document screenshots: even if cluster_ratio > 0.04, the cross-CDN compression
-        # heterogeneity of embedded blocks (ads, photos, widgets) is NOT photo manipulation.
-        # Cap the global_score for doc screenshots unless cluster_ratio is very high (> 0.25),
-        # which would indicate genuine internal splicing WITHIN the core article photo.
+        # Continuous, calibrated manipulation score
         if is_doc_screenshot:
             if cluster_ratio < 0.25:
-                global_score = min(global_score, 0.28)
-            elif cluster_ratio < 0.50:
-                global_score = min(global_score, 0.45)
+                global_score = min(float(cluster_ratio * 4.0), 0.28)
+            else:
+                global_score = min(float(0.28 + (cluster_ratio - 0.25) * 2.0), 0.45)
+        else:
+            # For natural photographs:
+            # - cluster_ratio < 0.035 (incidental noise / normal scene texture): score 0.0 to 0.28
+            # - cluster_ratio 0.035 to 0.055 (mild / localized anomaly transition): score 0.28 to 0.63
+            # - cluster_ratio >= 0.055 (significant foreign patch >= 5.5%): score 0.63 to 0.98
+            if cluster_ratio < 0.035:
+                global_score = float(np.clip(cluster_ratio / 0.035 * 0.28, 0.0, 0.28))
+            elif cluster_ratio < 0.055:
+                global_score = float(0.28 + (cluster_ratio - 0.035) / 0.020 * 0.35)
+            else:
+                global_score = float(np.clip(0.63 + (cluster_ratio - 0.055) * 5.0, 0.63, 0.98))
 
         # Create RGBA heatmap overlay for display
         heatmap_color = cv2.applyColorMap((norm_map * 255).astype(np.uint8), cv2.COLORMAP_JET)
