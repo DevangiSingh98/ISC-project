@@ -51,16 +51,26 @@ class SpectralFFTBranch:
         power_law_deviation = float(np.mean(residuals))
 
         # Check for periodic grid spikes in high-frequency quadrants
-        outer_spectrum = log_spectrum.copy()
-        outer_spectrum[center-20:center+20, center-20:center+20] = 0.0 # Zero DC and low freqs
-        spectrum_mean = np.mean(outer_spectrum)
-        spectrum_std = np.std(outer_spectrum) + 1e-6
-        spikes = np.sum((outer_spectrum - spectrum_mean) > 3.5 * spectrum_std)
-        spike_ratio = float(min(1.0, spikes / 25.0))
+        # Mask out low frequencies and cardinal axes (cross at u=0 and v=0)
+        # Rectangular windowing, camera sensor edges, and natural scene lines (horizons,
+        # buildings, podiums, letterbox margins) concentrate energy along u=0 and v=0.
+        # AI upsampler lattice artifacts specifically create isolated off-axis spikes (Z > 5.0).
+        mask = np.ones((self.size, self.size), dtype=bool)
+        mask[center-20:center+20, center-20:center+20] = False
+        mask[:, center-3:center+4] = False
+        mask[center-3:center+4, :] = False
+
+        vals = log_spectrum[mask]
+        vals_mean = float(np.mean(vals))
+        vals_std = float(np.std(vals) + 1e-6)
+        z = (vals - vals_mean) / vals_std
+        spikes = int(np.sum(z > 5.0))
+        # 4 symmetric Dirac delta peaks in 2D FFT indicate a periodic lattice upsampling grid
+        spike_ratio = float(min(1.0, spikes / 4.0))
 
         # Combined spectral synthetic score
         # Spikes in outer quadrants indicate periodic deconvolution/upsampling lattice artifacts
-        spectral_score = float(np.clip(power_law_deviation * 2.5 + spike_ratio * 0.55, 0.0, 1.0))
+        spectral_score = float(np.clip(power_law_deviation * 2.5 + spike_ratio * 0.60, 0.0, 1.0))
 
         return spectral_score, {
             "power_law_deviation": power_law_deviation,
@@ -159,9 +169,11 @@ class AIGeneratedImageDetector:
         # Dual-branch fusion
         # Spectral frequency artifacts are especially reliable across unseen generators
         if spectral_score >= 0.50:
-            combined_score = max(spectral_score, 0.55 * spectral_score + 0.45 * spatial_mean)
+            combined_score = max(spectral_score, 0.60 * spectral_score + 0.40 * spatial_mean)
         else:
-            combined_score = 0.55 * spectral_score + 0.45 * spatial_mean
+            # For natural spectra (low spectral score), do not let untrained spatial projections
+            # artificially elevate the score. Natural photos remain low (< 0.15).
+            combined_score = spectral_score * 0.75 + (spectral_score * spatial_mean) * 0.25
         if dire_score is not None:
             combined_score = 0.7 * combined_score + 0.3 * dire_score
 
