@@ -162,22 +162,7 @@ class FusionRulesEngine:
             (forensics.manipulation_score >= 0.75)
         )
 
-        if is_synthetic and forensics.synthetic_score >= forensics.manipulation_score:
-            signals.append(ContributingSignal(
-                name="Generative Spectral Fingerprint",
-                weight=0.85,
-                score=forensics.synthetic_score,
-                description="2D FFT frequency spectrum exhibits anomalous periodic artifacts and departure from natural 1/f decay."
-            ))
-            conf = float(np.clip(50.0 + forensics.synthetic_score * 48.0, 50.0, 99.0))
-            return (
-                VerdictType.AI_GENERATED,
-                round(conf, 1),
-                "Media demonstrates characteristic synthetic generative model artifacts (Diffusion/GAN spectral patterns).",
-                signals
-            )
-
-        if is_corroborated_manip and not is_doc:
+        if is_corroborated_manip and not is_doc and (forensics.manipulation_score >= forensics.synthetic_score - 0.10):
             # Genuine non-document manipulation confirmed by multi-signal corroboration
             signals.append(ContributingSignal(
                 name="SRM Noise Residual Discrepancy",
@@ -197,6 +182,21 @@ class FusionRulesEngine:
                 VerdictType.SUSPICIOUS_MANIPULATED,
                 round(conf, 1),
                 "Strong forensic evidence of digital manipulation (splicing, inpainting, or copy-move). Localization heatmap isolates tampered zones.",
+                signals
+            )
+
+        if is_synthetic:
+            signals.append(ContributingSignal(
+                name="Generative Spectral & Latent Artifact Fingerprint",
+                weight=0.85,
+                score=forensics.synthetic_score,
+                description="Forensic inspection detected characteristic latent diffusion/GAN signatures (periodic decoder stride lattice, anomalous noise-luminance coupling, or spectral spikes)."
+            ))
+            conf = float(np.clip(50.0 + forensics.synthetic_score * 48.0, 50.0, 99.0))
+            return (
+                VerdictType.AI_GENERATED,
+                round(conf, 1),
+                "Media demonstrates characteristic synthetic generative model artifacts (Diffusion/GAN spectral patterns or latent decoder footprint).",
                 signals
             )
 
