@@ -27,7 +27,7 @@ NewsProof is an open, end-to-end media authenticity verification system that com
 | Public verify page (`/v/{asset_id}`) | ✅ |
 | REST API (`/api/v1/verify`, `/manifest`, `/report`, `/ledger`) | ✅ |
 | Docker Compose (full stack local dev) | ✅ |
-| Video deepfake detection | 🔜 v2 |
+| Video pipeline (VideoMAE + frame/temporal heuristics) | ⚠️ Experimental |
 | Browser extension (Chrome Manifest V3) | 🔜 v2 |
 | CMS / WordPress plugin | 🔜 v2 |
 | Kubernetes + horizontal GPU autoscaling | 🔜 v2 |
@@ -86,7 +86,8 @@ docker compose up --build
 python -m pytest tests/ -v
 ```
 
-Expected: **29 tests pass** across all milestones (M0–M6).
+Run the test suite to validate the current implementation; results may grow as
+new security and evaluation tests are added.
 
 ### Run Benchmark Evaluation
 
@@ -94,6 +95,42 @@ Expected: **29 tests pass** across all milestones (M0–M6).
 python data/benchmarks/run_eval.py
 # Outputs: docs/EVAL.md with measured metrics
 ```
+
+### Run Robustness and Dataset Checks
+
+```bash
+# Train the spatial AI detector on Tiny-GenImage
+python data/benchmarks/tiny_genimage.py --train-per-class 4000 --validation-per-class 1000 --epochs 5
+
+# Measure pHash/dHash stability under common image transformations
+python data/benchmarks/fingerprint_robustness.py
+
+# Validate a downloaded dataset manifest for cross-split content leakage
+python -c "from data.benchmarks.dataset_evaluation import load_manifest, validate_manifest; from pathlib import Path; print(validate_manifest(load_manifest(Path('path/to/manifest.csv'))))"
+
+# Evaluate video scores after re-encoding, resizing, trimming, and frame dropping
+python data/benchmarks/video_robustness.py --video path/to/video.mp4
+
+# Fine-tune VideoMAE on the downloaded Celeb-DF dataset
+python data/benchmarks/train_videomae.py --dataset . --per-class 100 --epochs 5 --batch-size 1
+# Optional override:
+# PowerShell: $env:NEWSPROOF_VIDEOMAE_WEIGHTS = "models/celebdf_videomae_100/videomae-celebdf"
+```
+
+Video analysis uses 16 VideoMAE frames, face-aware crop sampling, motion-compensated
+temporal heuristics, and existing frame-level image forensics. The 100-video
+Celeb-DF run used 80 real/80 fake training clips and 20 real/20 fake source-disjoint
+validation clips. Held-out accuracy was 67.5% and ROC-AUC was 0.63, so the pipeline
+remains experimental and must not be presented as production-grade.
+`NEWSPROOF_VIDEOMAE_WEIGHTS` and `NEWSPROOF_VIDEO_MODEL` can override the checkpoint.
+
+The security assumptions, attack cases, and remaining deployment gaps are
+documented in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
+The Tiny-GenImage training command writes local weights to
+`models/tiny_genimage_spatial.pt`. The API automatically loads that artifact
+when present. The checked-in architecture does not include binary weights;
+run the training command after cloning the repository.
 
 ---
 
@@ -121,7 +158,7 @@ ISC Project/
 │   │   ├── synthetic/detector.py      # FFT spectral + CNN spatial + MC Dropout
 │   │   ├── noise_compression/         # ELA, double-JPEG DCT, PRNU auxiliary
 │   │   ├── calibrator.py              # Isotonic regression + dual ECE tracking
-│   │   └── deepfake_video/__init__.py # Video stub (v2)
+│   │   └── deepfake_video/__init__.py # VideoMAE + temporal/frame heuristics
 │   └── fusion/
 │       ├── rules_engine.py            # 8-verdict deterministic fusion + core invariant
 │       ├── merkle_ledger.py           # Append-only SHA-256 Merkle tree
@@ -129,14 +166,18 @@ ISC Project/
 ├── data/
 │   ├── benchmarks/
 │   │   ├── run_eval.py                # Full benchmark evaluation runner
-│   │   └── benchmark_datasets.py      # Corpus builder + dataset source documentation
+│   │   ├── benchmark_datasets.py      # Corpus builder + dataset source documentation
+│   │   ├── dataset_evaluation.py     # Manifest leakage and localization metrics
+│   │   ├── fingerprint_robustness.py # Image fingerprint transformation experiment
+│   │   └── video_robustness.py       # Video editorial-transformation experiment
 │   └── test_samples/certs/            # C2PA conformance fixture certificates
 ├── tests/                             # 29-test suite (M0–M6)
 ├── docs/
 │   ├── PLAN.md                        # Milestone table + task list
 │   ├── DECISIONS.md                   # Architectural decision log
 │   ├── EVAL.md                        # Benchmark results (real measured metrics)
-│   └── MODEL_CARD.md                  # Detector descriptions + known limitations
+│   ├── MODEL_CARD.md                  # Detector descriptions + known limitations
+│   └── THREAT_MODEL.md                # Security threats, controls, and gaps
 ├── docker-compose.yml
 ├── requirements.txt
 └── README.md                          ← this file
@@ -148,15 +189,15 @@ ISC Project/
 
 | Metric | Target | v1 Result |
 |---|---|---|
-| Manipulation F1 | ≥ 0.90 | **1.000** |
-| AI-Generated AUC (Known Generators) | ≥ 0.95 | **0.958** |
+| Manipulation F1 | ≥ 0.90 | **0.600** |
+| AI-Generated AUC (Known Generators) | ≥ 0.95 | **0.993** |
 | AI-Generated AUC (Unseen Generators) | ≥ 0.85 | **1.000** |
-| False-Positive Rate (Authentic) | ≤ 3.0% | **0.00%** |
+| False-Positive Rate (Authentic) | ≤ 3.0% | **57.50%** |
 | Median Image Latency | < 5s | **0.079s** |
 | p95 Image Latency | < 10s | **0.097s** |
 | In-Distribution ECE | < 0.05 | **~0.000** |
 
-> ⚠️ **Important**: These numbers are from a **controlled synthetic evaluation corpus**, not live wire-agency archives. See [`docs/EVAL.md`](docs/EVAL.md) and [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) for detailed limitations and Known Gap 5 disclosure.
+> ⚠️ **Important**: The manipulation and authentic-media results currently miss their targets. These numbers are from a **controlled synthetic evaluation corpus**, not live wire-agency archives. See [`docs/EVAL.md`](docs/EVAL.md), [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md), and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for limitations.
 
 ---
 
