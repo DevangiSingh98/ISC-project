@@ -4,4 +4,10 @@ __pycache__/
 .pytest_cache/
 *.log
 .env
+/models/
+data/benchmarks/*_results.json
+Celeb-real
+Celeb-synthesis
+List_of_testing_videos.txt
+Youtube-real
 
