@@ -2,11 +2,14 @@ import os
 import uuid
 import io
 import tempfile
+import time
+from threading import Lock
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from PIL import Image
+from PIL.Image import DecompressionBombError, UnidentifiedImageError
 
 from apps.api.app.schemas.verdict import (
     VerdictType,
@@ -50,6 +53,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+RATE_LIMIT_REQUESTS = 60
+RATE_LIMIT_WINDOW_SECONDS = 60.0
+_rate_limit_state: dict[str, List[float]] = {}
+_rate_limit_lock = Lock()
+
+
+@app.middleware("http")
+async def verification_rate_limit(request, call_next):
+    """Apply a small in-process guard to expensive verification endpoints."""
+    if request.method == "POST" and request.url.path in {
+        "/api/v1/verify",
+        "/api/v1/verify/video",
+    }:
+        client_host = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        with _rate_limit_lock:
+            recent = [
+                timestamp
+                for timestamp in _rate_limit_state.get(client_host, [])
+                if now - timestamp < RATE_LIMIT_WINDOW_SECONDS
+            ]
+            if len(recent) >= RATE_LIMIT_REQUESTS:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Verification rate limit exceeded. Try again later."},
+                    headers={"Retry-After": str(int(RATE_LIMIT_WINDOW_SECONDS))},
+                )
+            recent.append(now)
+            _rate_limit_state[client_host] = recent
+    return await call_next(request)
+
 # Engine Singletons
 c2pa_validator = C2PAValidator()
 localizer = ManipulationLocalizer()
@@ -64,6 +98,9 @@ results_store: dict[str, VerificationResult] = {}
 video_results_store: dict[str, VideoVerificationResult] = {}
 
 SAMPLES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "test_samples"))
+IMAGE_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+IMAGE_MAX_BYTES = 25 * 1024 * 1024
+IMAGE_MAX_PIXELS = 50_000_000
 
 AVAILABLE_SAMPLES = [
     {
@@ -153,24 +190,41 @@ async def verify_image(
     deep_scan: bool = Form(False)
 ):
     try:
-        raw_bytes = await file.read()
+        raw_bytes = await file.read(IMAGE_MAX_BYTES + 1)
         if len(raw_bytes) == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        if len(raw_bytes) > IMAGE_MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image file exceeds maximum allowed size ({IMAGE_MAX_BYTES // (1024*1024)} MB)."
+            )
+
+        filename = file.filename or "image.jpg"
+        ext = os.path.splitext(filename)[1].lower() or ".jpg"
+        if ext not in IMAGE_ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported image format '{ext}'. Accepted: JPG, PNG, WebP, TIF, TIFF."
+            )
 
         # Ingestion: Hashing & Metadata
         sha256_hash = compute_sha256(raw_bytes)
         try:
             image = Image.open(io.BytesIO(raw_bytes))
             image.load()
-        except Exception:
+        except (DecompressionBombError, UnidentifiedImageError, OSError):
             raise HTTPException(status_code=400, detail="Invalid or unsupported image format.")
+        if image.width * image.height > IMAGE_MAX_PIXELS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image dimensions exceed the maximum supported pixel count ({IMAGE_MAX_PIXELS:,})."
+            )
 
         phash_str = compute_phash(image)
         meta = inspect_image_metadata(image, raw_bytes)
         is_degraded = meta["is_degraded"]
 
         # Track A: Cryptographic Provenance (C2PA)
-        ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
         provenance = c2pa_validator.validate_bytes(raw_bytes, extension=ext)
 
         # Durable Credentials check: If no C2PA embedded, lookup in pHash registry
@@ -331,7 +385,7 @@ async def verify_video(
     """
     try:
         # --- File validation ---
-        raw_bytes = await file.read()
+        raw_bytes = await file.read(VIDEO_MAX_BYTES + 1)
         if len(raw_bytes) == 0:
             raise HTTPException(status_code=400, detail="Uploaded video file is empty.")
         if len(raw_bytes) > VIDEO_MAX_BYTES:
@@ -394,6 +448,7 @@ async def verify_video(
                 timestamp_sec=sf["timestamp_sec"],
                 manipulation_score=sf["manipulation_score"],
                 synthetic_score=sf["synthetic_score"],
+                temporal_inconsistency_score=sf.get("temporal_inconsistency_score", 0.0),
                 face_detected=sf["face_detected"],
                 heatmap_base64=sf.get("heatmap_base64"),
                 thumbnail_base64=sf.get("thumbnail_base64"),
@@ -405,6 +460,10 @@ async def verify_video(
             mean_manipulation_score=raw_forensics["mean_manipulation_score"],
             mean_synthetic_score=raw_forensics["mean_synthetic_score"],
             deepfake_score=raw_forensics["deepfake_score"],
+            video_model_score=raw_forensics.get("video_model_score"),
+            video_model_status=raw_forensics.get("video_model_status", "heuristic_fallback"),
+            video_model_kind=raw_forensics.get("video_model_kind"),
+            video_model_threshold=raw_forensics.get("video_model_threshold", 0.5),
             temporal_inconsistency_score=raw_forensics["temporal_inconsistency_score"],
             face_detected_in_video=raw_forensics["face_detected_in_video"],
             frame_count_total=raw_forensics["frame_count_total"],
