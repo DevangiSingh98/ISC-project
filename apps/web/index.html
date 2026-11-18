@@ -44,7 +44,7 @@
         <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
           NewsProof <span class="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">v2.0 Image + Video</span>
         </h1>
-        <p class="text-xs text-slate-400">Cryptographic Provenance (C2PA) + Calibrated AI Forensics</p>
+        <p class="text-xs text-slate-400">Cryptographic Provenance (C2PA) + AI Forensics Evidence</p>
       </div>
     </div>
     <div class="flex items-center space-x-4">
@@ -154,7 +154,7 @@
         <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center min-w-[140px]">
           <span class="text-xs font-semibold text-slate-400 uppercase">Confidence</span>
           <div id="confidenceVal" class="text-3xl font-extrabold mt-0.5"></div>
-          <span class="text-[10px] text-emerald-400 font-medium">Calibrated (ECE &lt; 0.05)</span>
+          <span class="text-[10px] text-slate-400 font-medium">Rule-based evidence score; not a probability</span>
         </div>
       </div>
 
@@ -248,7 +248,7 @@
           <!-- Track B: Forensics Metrics Card -->
           <div class="bg-slate-800/50 border border-slate-800 rounded-2xl p-6">
             <h3 class="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <i class="fa-solid fa-dna text-indigo-400"></i> Track B: AI Lie Detector Ensemble
+              <i class="fa-solid fa-dna text-indigo-400"></i> Track B: AI Forensics Ensemble
             </h3>
 
             <div class="space-y-4 text-xs">
@@ -332,7 +332,7 @@
         <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 text-center min-w-[140px]">
           <span class="text-xs font-semibold text-slate-400 uppercase">Confidence</span>
           <div id="videoConfidenceVal" class="text-3xl font-extrabold mt-0.5"></div>
-          <span class="text-[10px] text-emerald-400 font-medium">Calibrated</span>
+          <span class="text-[10px] text-slate-400 font-medium">Rule-based evidence score; not a probability</span>
         </div>
       </div>
 
@@ -799,7 +799,13 @@
         iconCont.className = 'w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg bg-slate-700 text-slate-400';
         iconCont.innerHTML = '<i class="fa-solid fa-question"></i>';
         c2paTag.className  = 'text-xs px-2 py-0.5 rounded font-medium bg-slate-700 text-slate-300';
-        c2paTag.innerText  = 'Degraded / High Variance';
+        if (res.forensics.is_degraded) {
+          c2paTag.innerText = 'Low Resolution / Degraded';
+        } else if (res.forensics.uncertainty_variance > 0.065) {
+          c2paTag.innerText = 'High Model Uncertainty';
+        } else {
+          c2paTag.innerText = 'Insufficient Evidence';
+        }
       }
       banner.className = `rounded-2xl p-6 border shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 ${bgGrad}`;
 
