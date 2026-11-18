@@ -36,8 +36,13 @@ except Exception:
 # Sampling strategy constants
 DEFAULT_SAMPLE_FPS = 1.0        # Analyse 1 frame per second by default
 MAX_FRAMES_TO_ANALYSE = 60     # Hard cap to keep latency reasonable
+VIDEOMAE_FRAMES = 16
 SUSPICIOUS_FRAME_THRESHOLD = 0.40  # Score above which a frame is "suspicious"
 THUMBNAIL_SIZE = (160, 90)       # Width × height for strip thumbnails
+DEFAULT_VIDEO_MODEL = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "models",
+    "celebdf_resnet18", "celebdf_resnet18.pt",
+))
 
 
 def _frame_to_pil(frame_bgr: np.ndarray) -> Image.Image:
@@ -128,19 +133,33 @@ def _compute_optical_flow_inconsistency(
     if len(good_prev) < 2:
         return 0.0
 
-    # Flow magnitudes
+    # Estimate the dominant camera/object motion first. Natural camera pans
+    # should be removed before measuring local temporal disagreement.
+    prev_points = good_prev.reshape(-1, 1, 2).astype(np.float32)
+    next_points = good_next.reshape(-1, 1, 2).astype(np.float32)
+    affine, inliers = cv2.estimateAffinePartial2D(
+        prev_points,
+        next_points,
+        method=cv2.RANSAC,
+        ransacReprojThreshold=2.5,
+    )
+    if affine is not None and inliers is not None and int(np.count_nonzero(inliers)) >= 3:
+        predicted = cv2.transform(prev_points, affine).reshape(-1, 2)
+        residuals = np.linalg.norm(good_next.reshape(-1, 2) - predicted, axis=1)
+        inlier_residuals = residuals[inliers.ravel().astype(bool)]
+        if len(inlier_residuals) >= 3:
+            # Median residual is robust to a few bad tracks or an occlusion.
+            residual = float(np.median(inlier_residuals))
+            spread = float(np.median(np.abs(inlier_residuals - residual)))
+            return float(np.clip((residual + spread) / 6.0, 0.0, 1.0))
+
+    # If a global motion model cannot be estimated, retain a conservative
+    # fallback based on flow dispersion rather than absolute motion.
     flow_vecs = good_next - good_prev
     magnitudes = np.linalg.norm(flow_vecs, axis=2).ravel()
-
-    # Inconsistency = coefficient of variation of flow magnitudes
-    # Natural motion produces smooth, consistent flow; deepfake artefacts
-    # produce erratic per-point flow divergence.
     mean_mag = float(np.mean(magnitudes)) + 1e-6
-    std_mag = float(np.std(magnitudes))
-    cv_score = std_mag / mean_mag  # coefficient of variation
-
-    # Normalise: CoV > 2.0 is considered very inconsistent
-    return float(np.clip(cv_score / 2.0, 0.0, 1.0))
+    cv_score = float(np.std(magnitudes)) / mean_mag
+    return float(np.clip(cv_score / 2.5, 0.0, 1.0))
 
 
 class VideoForensicsDetector:
@@ -160,12 +179,16 @@ class VideoForensicsDetector:
 
     def __init__(self, sample_fps: float = DEFAULT_SAMPLE_FPS):
         self.sample_fps = sample_fps
-        self.version = "v2.0-full"
+        self.version = "v2.1-video-model-ready"
 
         # Lazy-imported image engines (avoid heavy torch init at module import time)
         self._localizer = None
         self._synthetic_detector = None
         self._face_cascade = None
+        self._videomae = None
+        self._videomae_status = "not_configured"
+        self._video_model_threshold = 0.5
+        self._videomae_kind = None
 
     def _get_localizer(self):
         if self._localizer is None:
@@ -196,6 +219,132 @@ class VideoForensicsDetector:
                 self._face_cascade = False
         return self._face_cascade
 
+    def _get_videomae(self):
+        """Load a trained Celeb-DF frame/temporal checkpoint when configured."""
+        if self._videomae is not None or self._videomae_status != "not_configured":
+            return self._videomae
+
+        checkpoint = os.environ.get("NEWSPROOF_VIDEO_MODEL", "").strip()
+        if not checkpoint:
+            checkpoint = os.environ.get("NEWSPROOF_VIDEOMAE_WEIGHTS", "").strip()
+        if not checkpoint:
+            videomae_100_default = os.path.abspath(os.path.join(
+                os.path.dirname(__file__), "..", "..", "..", "models",
+                "celebdf_videomae_100", "videomae-celebdf",
+            ))
+            videomae_default = os.path.abspath(os.path.join(
+                os.path.dirname(__file__), "..", "..", "..", "models",
+                "celebdf_videomae", "videomae-celebdf",
+            ))
+            if os.path.isdir(videomae_100_default):
+                checkpoint = videomae_100_default
+            else:
+                checkpoint = videomae_default if os.path.isdir(videomae_default) else DEFAULT_VIDEO_MODEL
+        if not checkpoint:
+            self._videomae_status = "not_configured"
+            return None
+        if not os.path.exists(checkpoint):
+            self._videomae_status = "checkpoint_missing"
+            return None
+
+        try:
+            import torch
+            if os.path.isdir(checkpoint):
+                from transformers import AutoImageProcessor, VideoMAEForVideoClassification
+                self._videomae_processor = AutoImageProcessor.from_pretrained(checkpoint)
+                self._videomae = VideoMAEForVideoClassification.from_pretrained(checkpoint)
+                self._videomae_kind = "videomae"
+                report_path = os.path.join(os.path.dirname(checkpoint), "videomae-celebdf.json")
+                if os.path.isfile(report_path):
+                    import json
+                    with open(report_path, "r", encoding="utf-8") as report_file:
+                        report = json.load(report_file)
+                    self._video_model_threshold = float(
+                        report.get("decision_threshold", report.get("metrics", {}).get("decision_threshold", 0.5))
+                    )
+            else:
+                from torchvision.models import resnet18
+                import torchvision.transforms as T
+                state = torch.load(checkpoint, map_location="cpu")
+                model = resnet18(weights=None)
+                model.fc = torch.nn.Linear(model.fc.in_features, 2)
+                model.load_state_dict(state.get("state_dict", state))
+                self._video_model_threshold = float(state.get("decision_threshold", 0.5))
+                self._videomae_processor = T.Normalize(
+                    mean=(0.485, 0.456, 0.406),
+                    std=(0.229, 0.224, 0.225),
+                )
+                self._videomae = model
+                self._videomae_kind = "resnet18"
+            self._videomae.eval()
+            self._videomae_device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"
+            )
+            self._videomae.to(self._videomae_device)
+            self._videomae_status = "loaded"
+        except (ImportError, OSError, RuntimeError, ValueError):
+            self._videomae = None
+            self._videomae_status = "load_failed"
+        return self._videomae
+
+    def _analyze_videomae(self, frames: List[np.ndarray]) -> Optional[float]:
+        """Return the trained frame/temporal model's fake probability."""
+        model = self._get_videomae()
+        if model is None:
+            return None
+        try:
+            import torch
+            selected = np.linspace(0, len(frames) - 1, VIDEOMAE_FRAMES).round().astype(int)
+            probabilities = []
+            with torch.inference_mode():
+                if self._videomae_kind == "videomae":
+                    rgb_frames = []
+                    for index in selected:
+                        frame = frames[int(index)]
+                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        face_roi = self._detect_largest_face(gray)
+                        if face_roi is not None:
+                            x, y, fw, fh = face_roi
+                            margin = int(0.25 * max(fw, fh))
+                            x1, y1 = max(0, x - margin), max(0, y - margin)
+                            x2, y2 = min(frame.shape[1], x + fw + margin), min(frame.shape[0], y + fh + margin)
+                            crop = frame[y1:y2, x1:x2]
+                        else:
+                            crop = frame
+                        crop = cv2.resize(crop, (224, 224), interpolation=cv2.INTER_AREA)
+                        rgb_frames.append(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                    inputs = self._videomae_processor(rgb_frames, return_tensors="pt")
+                    inputs = {key: value.to(self._videomae_device) for key, value in inputs.items()}
+                    logits = model(**inputs).logits
+                    return float(torch.softmax(logits, dim=-1)[0, 1].item())
+
+                for index in selected:
+                    frame = frames[int(index)]
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    face_roi = self._detect_largest_face(gray)
+                    if face_roi is not None:
+                        x, y, fw, fh = face_roi
+                        margin = int(0.25 * max(fw, fh))
+                        x1, y1 = max(0, x - margin), max(0, y - margin)
+                        x2, y2 = min(frame.shape[1], x + fw + margin), min(frame.shape[0], y + fh + margin)
+                        crop = frame[y1:y2, x1:x2]
+                    else:
+                        crop = frame
+                    crop = cv2.resize(crop, (224, 224), interpolation=cv2.INTER_AREA)
+                    rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                    tensor = torch.from_numpy(rgb).permute(2, 0, 1).float().div(255.0)
+                    tensor = self._videomae_processor(tensor).unsqueeze(0).to(self._videomae_device)
+                    logits = model(tensor)
+                    probabilities.append(float(torch.softmax(logits, dim=1)[0, 1].item()))
+            if not probabilities:
+                return None
+            mean_probability = float(np.mean(probabilities))
+            maximum_probability = float(np.max(probabilities))
+            return float(np.clip(0.65 * mean_probability + 0.35 * maximum_probability, 0.0, 1.0))
+        except (IndexError, KeyError, RuntimeError, ValueError, TypeError):
+            self._videomae_status = "inference_failed"
+            return None
+
     # ------------------------------------------------------------------
     # Frame sampling
     # ------------------------------------------------------------------
@@ -220,9 +369,11 @@ class VideoForensicsDetector:
 
         # Cap at maximum
         if len(indices) > MAX_FRAMES_TO_ANALYSE:
-            # Evenly subsample from already-selected indices
-            subsample_step = len(indices) // MAX_FRAMES_TO_ANALYSE
-            indices = indices[::subsample_step][:MAX_FRAMES_TO_ANALYSE]
+            # Preserve coverage across the entire video, including its end.
+            positions = np.linspace(
+                0, len(indices) - 1, MAX_FRAMES_TO_ANALYSE
+            ).round().astype(int)
+            indices = [indices[position] for position in positions]
 
         return sorted(set(indices))
 
@@ -291,6 +442,7 @@ class VideoForensicsDetector:
         per_frame_manip: List[float] = []
         per_frame_synth: List[float] = []
         per_frame_temporal: List[float] = []
+        sampled_frames: List[np.ndarray] = []
         suspicious_frames_data: List[Dict[str, Any]] = []
 
         face_detected_in_any_frame = False
@@ -310,6 +462,7 @@ class VideoForensicsDetector:
             ret, frame_bgr = cap.read()
             if not ret or frame_bgr is None:
                 continue
+            sampled_frames.append(frame_bgr.copy())
 
             timestamp_sec = round(idx / source_fps, 3) if source_fps > 0 else 0.0
 
@@ -349,7 +502,7 @@ class VideoForensicsDetector:
             # --- Suspicious frame detection ---
             # A frame is suspicious if either manipulation or synthetic score
             # exceeds the threshold, or temporal inconsistency is very high.
-            frame_overall = max(manip_score, synth_score)
+            frame_overall = max(manip_score, synth_score, temporal_score)
             if face_roi is not None:
                 # Boost score slightly when a face is present and score is elevated
                 frame_overall = max(frame_overall, 0.4 * temporal_score + 0.6 * frame_overall)
@@ -370,6 +523,7 @@ class VideoForensicsDetector:
                     "timestamp_sec": timestamp_sec,
                     "manipulation_score": round(manip_score, 4),
                     "synthetic_score": round(synth_score, 4),
+                    "temporal_inconsistency_score": round(temporal_score, 4),
                     "face_detected": face_roi is not None,
                     "heatmap_base64": heatmap_b64,
                     "thumbnail_base64": thumb_b64,
@@ -377,6 +531,27 @@ class VideoForensicsDetector:
 
             prev_gray = gray
             prev_face_roi = face_roi
+
+        # VideoMAE must receive a complete evenly distributed temporal clip,
+        # independent of the slower 1-FPS frame-forensics sampling above.
+        if not sampled_frames:
+            pass
+        else:
+            model_indices = np.linspace(
+                0, max(0, total_frames - 1), VIDEOMAE_FRAMES
+            ).round().astype(int)
+            model_cap = cv2.VideoCapture(video_path)
+            model_frames: List[np.ndarray] = []
+            try:
+                for idx in model_indices:
+                    model_cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                    ret, frame_bgr = model_cap.read()
+                    if ret and frame_bgr is not None:
+                        model_frames.append(frame_bgr.copy())
+            finally:
+                model_cap.release()
+            if len(model_frames) == VIDEOMAE_FRAMES:
+                sampled_frames = model_frames
 
         cap.release()
 
@@ -387,21 +562,33 @@ class VideoForensicsDetector:
         max_manip = float(np.max(per_frame_manip)) if per_frame_manip else 0.0
         max_synth = float(np.max(per_frame_synth)) if per_frame_synth else 0.0
         max_temporal = float(np.max(per_frame_temporal)) if per_frame_temporal else 0.0
+        video_model_score = self._analyze_videomae(sampled_frames)
 
         # --- Deepfake score fusion ---
         # Weight: mean-frame synthetic (40%) + max-frame synthetic (20%) +
         #         temporal inconsistency (25%) + manipulation signal (15%)
-        deepfake_score = float(np.clip(
+        heuristic_deepfake_score = float(np.clip(
             0.40 * mean_synth
             + 0.20 * max_synth
             + 0.25 * max_temporal
             + 0.15 * max_manip,
             0.0, 1.0
         ))
+        # A fine-tuned VideoMAE score is the primary score when available.
+        # The heuristic remains available for explanations and fallback only.
+        deepfake_score = (
+            video_model_score
+            if video_model_score is not None
+            else heuristic_deepfake_score
+        )
 
         # Boost deepfake score when faces are present and score is elevated —
         # facial region deepfakes produce stronger temporal artefacts.
-        if face_detected_in_any_frame and deepfake_score > 0.3:
+        if (
+            video_model_score is None
+            and face_detected_in_any_frame
+            and deepfake_score > 0.3
+        ):
             deepfake_score = float(np.clip(deepfake_score * 1.15, 0.0, 1.0))
 
         temporal_inconsistency_score = float(np.clip(
@@ -414,6 +601,12 @@ class VideoForensicsDetector:
             "mean_manipulation_score": round(mean_manip, 4),
             "mean_synthetic_score": round(mean_synth, 4),
             "deepfake_score": round(deepfake_score, 4),
+            "video_model_score": (
+                round(video_model_score, 4) if video_model_score is not None else None
+            ),
+            "video_model_status": self._videomae_status,
+            "video_model_kind": self._videomae_kind,
+            "video_model_threshold": round(self._video_model_threshold, 6),
             "temporal_inconsistency_score": round(temporal_inconsistency_score, 4),
             "face_detected_in_video": face_detected_in_any_frame,
             "frame_count_total": total_frames,
@@ -436,6 +629,10 @@ class VideoForensicsDetector:
             "mean_manipulation_score": 0.0,
             "mean_synthetic_score": 0.0,
             "deepfake_score": 0.0,
+            "video_model_score": None,
+            "video_model_status": self._videomae_status,
+            "video_model_kind": self._videomae_kind,
+            "video_model_threshold": round(self._video_model_threshold, 6),
             "temporal_inconsistency_score": 0.0,
             "face_detected_in_video": False,
             "frame_count_total": total_frames,

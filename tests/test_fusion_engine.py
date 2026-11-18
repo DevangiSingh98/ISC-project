@@ -32,6 +32,31 @@ def test_verdict_row_1_verified_authentic(engine):
     assert conf >= 95.0
     assert "Cryptographically verified authentic" in expl
 
+
+def test_valid_but_untrusted_c2pa_is_not_verified(engine):
+    prov = ProvenanceDetails(
+        has_c2pa=True,
+        is_valid=True,
+        is_trusted=False,
+        hash_match=True,
+        issuer="Unknown Publisher",
+        untrusted_warning="Issuer is not trusted.",
+    )
+    forensics = ForensicsDetails(
+        manipulation_score=0.05,
+        synthetic_score=0.05,
+        compression_anomaly_score=0.05,
+        uncertainty_variance=0.0,
+    )
+
+    verdict, confidence, explanation, signals = engine.evaluate(prov, forensics)
+
+    assert verdict == VerdictType.UNVERIFIABLE
+    assert confidence == 40.0
+    assert "not trusted" in explanation
+    assert any(signal.name == "Untrusted Cryptographic Issuer" for signal in signals)
+
+
 def test_verdict_row_2_authentic_edited_declared(engine):
     prov = ProvenanceDetails(
         has_c2pa=True,

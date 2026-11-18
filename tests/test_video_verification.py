@@ -58,6 +58,22 @@ def _make_synthetic_video(
 
 class TestVideoForensicsDetector:
 
+    def test_capped_sampling_covers_entire_video(self):
+        from engines.forensics.deepfake_video import (
+            MAX_FRAMES_TO_ANALYSE,
+            VideoForensicsDetector,
+        )
+
+        indices = VideoForensicsDetector(sample_fps=1.0)._select_frame_indices(
+            total_frames=10_000,
+            source_fps=25.0,
+        )
+
+        assert len(indices) == MAX_FRAMES_TO_ANALYSE
+        assert indices[0] == 0
+        assert indices[-1] == 9_999
+        assert indices[MAX_FRAMES_TO_ANALYSE // 2] > 4_000
+
     def test_analyze_returns_all_required_keys(self, tmp_path):
         """Engine must return all keys needed to build VideoForensicsDetails."""
         from engines.forensics.deepfake_video import VideoForensicsDetector
@@ -120,6 +136,8 @@ class TestVideoForensicsDetector:
         result = detector.analyze(path)
 
         assert isinstance(result["suspicious_frames"], list)
+        for frame in result["suspicious_frames"]:
+            assert 0.0 <= frame["temporal_inconsistency_score"] <= 1.0
 
     def test_thumbnail_is_base64_jpeg(self, tmp_path):
         """Worst-frame thumbnail, if present, must be a valid JPEG data URI."""
@@ -229,6 +247,26 @@ class TestFusionEngineVideo:
         assert verdict == VerdictType.VERIFIED_AUTHENTIC
         assert conf >= 95.0
 
+    def test_valid_but_untrusted_c2pa_is_not_verified(self):
+        from engines.fusion.rules_engine import FusionRulesEngine
+        from apps.api.app.schemas.verdict import VerdictType
+        engine = FusionRulesEngine()
+        prov = self._make_provenance(
+            has_c2pa=True,
+            is_valid=True,
+            is_trusted=False,
+            hash_match=True,
+            issuer="Unknown Publisher",
+        )
+        foren = self._make_forensics()
+
+        verdict, confidence, explanation, signals = engine.evaluate_video(prov, foren)
+
+        assert verdict == VerdictType.UNVERIFIABLE
+        assert confidence == 40.0
+        assert "not trusted" in explanation
+        assert any(signal.name == "Untrusted Video Cryptographic Issuer" for signal in signals)
+
     def test_broken_c2pa_returns_provenance_broken(self):
         from engines.fusion.rules_engine import FusionRulesEngine
         from apps.api.app.schemas.verdict import VerdictType
@@ -237,6 +275,21 @@ class TestFusionEngineVideo:
         foren = self._make_forensics()
         verdict, conf, _, _ = engine.evaluate_video(prov, foren)
         assert verdict == VerdictType.PROVENANCE_BROKEN
+
+    def test_video_model_inference_failure_returns_unverifiable(self):
+        from engines.fusion.rules_engine import FusionRulesEngine
+        from apps.api.app.schemas.verdict import VerdictType
+        engine = FusionRulesEngine()
+        prov = self._make_provenance()
+        foren = self._make_forensics(deepfake=0.99)
+        foren.video_model_status = "inference_failed"
+
+        verdict, confidence, explanation, signals = engine.evaluate_video(prov, foren)
+
+        assert verdict == VerdictType.UNVERIFIABLE
+        assert confidence == 40.0
+        assert "could not be completed reliably" in explanation
+        assert any(signal.name == "Video Model Analysis Failure" for signal in signals)
 
     def test_temporal_inconsistency_alone_triggers_suspicious(self):
         from engines.fusion.rules_engine import FusionRulesEngine
@@ -278,6 +331,25 @@ class TestVideoAPIEndpoint:
             files={"file": ("test_video.mp4", video_bytes, "video/mp4")},
         )
         assert resp.status_code == 200, f"Got {resp.status_code}: {resp.text}"
+
+    def test_verify_video_rejects_unsupported_extension(self):
+        resp = self.client.post(
+            "/api/v1/verify/video",
+            files={"file": ("test_video.avi", b"not-a-video", "video/x-msvideo")},
+        )
+        assert resp.status_code == 400
+        assert "Unsupported video format" in resp.json()["detail"]
+
+    def test_verify_video_rejects_oversized_upload(self, monkeypatch):
+        import apps.api.app.main as main_module
+
+        monkeypatch.setattr(main_module, "VIDEO_MAX_BYTES", 4)
+        resp = self.client.post(
+            "/api/v1/verify/video",
+            files={"file": ("test_video.mp4", b"12345", "video/mp4")},
+        )
+        assert resp.status_code == 413
+        assert "maximum allowed size" in resp.json()["detail"]
 
     def test_verify_video_response_has_required_fields(self):
         video_bytes = self._make_video_bytes()

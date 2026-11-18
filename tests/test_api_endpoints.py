@@ -80,3 +80,42 @@ def test_api_html_routes(client):
     assert v_resp.status_code == 200
     assert "NewsProof Public Trust Signal" in v_resp.text
 
+def test_api_rejects_unsupported_image_extension(client):
+    response = client.post(
+        "/api/v1/verify",
+        files={"file": ("image.svg", b"<svg></svg>", "image/svg+xml")},
+    )
+    assert response.status_code == 400
+    assert "Unsupported image format" in response.json()["detail"]
+
+def test_api_rejects_oversized_image(client, monkeypatch):
+    import apps.api.app.main as main_module
+
+    monkeypatch.setattr(main_module, "IMAGE_MAX_BYTES", 4)
+    response = client.post(
+        "/api/v1/verify",
+        files={"file": ("large.jpg", b"12345", "image/jpeg")},
+    )
+    assert response.status_code == 413
+    assert "maximum allowed size" in response.json()["detail"]
+
+
+def test_api_rate_limits_expensive_verification_requests(client, monkeypatch):
+    import apps.api.app.main as main_module
+
+    monkeypatch.setattr(main_module, "RATE_LIMIT_REQUESTS", 1)
+    monkeypatch.setattr(main_module, "RATE_LIMIT_WINDOW_SECONDS", 60.0)
+    main_module._rate_limit_state.clear()
+
+    first = client.post(
+        "/api/v1/verify",
+        files={"file": ("invalid.jpg", b"not-an-image", "image/jpeg")},
+    )
+    second = client.post(
+        "/api/v1/verify",
+        files={"file": ("invalid.jpg", b"not-an-image", "image/jpeg")},
+    )
+
+    assert first.status_code == 400
+    assert second.status_code == 429
+

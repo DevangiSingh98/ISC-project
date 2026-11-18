@@ -86,8 +86,24 @@ class FusionRulesEngine:
                 signals
             )
 
+        # A valid signature from an unknown or revoked authority proves control
+        # of the signing key, but does not establish a trusted publisher identity.
+        if provenance.has_c2pa and provenance.is_valid and provenance.hash_match is True and not provenance.is_trusted:
+            signals.append(ContributingSignal(
+                name="Untrusted Cryptographic Issuer",
+                weight=1.0,
+                score=0.0,
+                description=provenance.untrusted_warning or "The credential issuer is not in the configured trusted authority list."
+            ))
+            return (
+                VerdictType.UNVERIFIABLE,
+                40.0,
+                "The file has an intact cryptographic credential, but its issuer is not trusted by this verifier. The signature proves the signer controlled the key, not that the publisher is an approved news organization.",
+                signals
+            )
+
         # 3. Check Track A: Valid C2PA Manifest
-        if provenance.has_c2pa and provenance.is_valid and provenance.hash_match is True:
+        if provenance.has_c2pa and provenance.is_valid and provenance.is_trusted and provenance.hash_match is True:
             # Check CORE INVARIANT: Valid signature coexists with forensic red flag!
             has_forensic_red_flag = (
                 forensics.manipulation_score > self.manip_threshold or
@@ -319,10 +335,30 @@ class FusionRulesEngine:
                 signals
             )
 
+        # An intact signature from an unknown or revoked authority is not
+        # equivalent to verified publisher provenance.
+        if provenance.has_c2pa and provenance.is_valid and provenance.hash_match is True and not provenance.is_trusted:
+            signals.append(ContributingSignal(
+                name="Untrusted Video Cryptographic Issuer",
+                weight=1.0,
+                score=0.0,
+                description=provenance.untrusted_warning or "The video credential issuer is not in the configured trusted authority list."
+            ))
+            return (
+                VerdictType.UNVERIFIABLE,
+                40.0,
+                "The video has an intact cryptographic credential, but its issuer is not trusted by this verifier. The signature proves the signer controlled the key, not that the publisher is an approved news organization.",
+                signals
+            )
+
         # 2. Valid C2PA Manifest
-        if provenance.has_c2pa and provenance.is_valid and provenance.hash_match is True:
+        if provenance.has_c2pa and provenance.is_valid and provenance.is_trusted and provenance.hash_match is True:
             has_forensic_red_flag = (
-                forensics.deepfake_score > self.synth_threshold
+                forensics.deepfake_score > (
+                    forensics.video_model_threshold
+                    if forensics.video_model_status == "loaded"
+                    else self.synth_threshold
+                )
                 or forensics.mean_manipulation_score > self.manip_threshold
             )
 
@@ -381,7 +417,30 @@ class FusionRulesEngine:
             )
 
         # 3. No C2PA: Rely on AI forensics
-        is_deepfake = forensics.deepfake_score >= self.synth_threshold
+        if forensics.video_model_status in {
+            "checkpoint_missing",
+            "load_failed",
+            "inference_failed",
+        }:
+            signals.append(ContributingSignal(
+                name="Video Model Analysis Failure",
+                weight=1.0,
+                score=0.0,
+                description=f"The configured video model could not complete analysis ({forensics.video_model_status})."
+            ))
+            return (
+                VerdictType.UNVERIFIABLE,
+                40.0,
+                "Video model analysis could not be completed reliably. No fake/manipulated verdict is asserted.",
+                signals
+            )
+
+        trained_model_threshold = (
+            forensics.video_model_threshold
+            if forensics.video_model_status == "loaded"
+            else self.synth_threshold
+        )
+        is_deepfake = forensics.deepfake_score >= trained_model_threshold
         is_temporally_inconsistent = forensics.temporal_inconsistency_score >= 0.55
         is_manipulated = forensics.mean_manipulation_score >= self.manip_threshold
 

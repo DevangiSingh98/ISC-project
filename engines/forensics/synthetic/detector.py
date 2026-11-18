@@ -1,3 +1,5 @@
+import logging
+import os
 import time
 from typing import Dict, Any, Tuple, Optional, List
 import numpy as np
@@ -5,6 +7,10 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from scipy.fftpack import fft2, fftshift
+
+LOGGER = logging.getLogger(__name__)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+DEFAULT_SPATIAL_WEIGHTS = os.path.join(PROJECT_ROOT, "models", "tiny_genimage_spatial.pt")
 
 class SpectralFFTBranch:
     """
@@ -106,15 +112,30 @@ class AIGeneratedImageDetector:
     2. Spatial CNN / ConvNeXt backbone with MC-Dropout uncertainty estimation
     3. Optional DIRE (Diffusion Reconstruction Error) behind deep-scan flag.
     """
-    def __init__(self, device: Optional[str] = None):
+    def __init__(self, device: Optional[str] = None, model_path: Optional[str] = None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.fft_branch = SpectralFFTBranch()
         self.spatial_model = LightweightSpatialBackbone().to(self.device)
+        self.model_path = model_path or os.environ.get(
+            "NEWSPROOF_SPATIAL_WEIGHTS", DEFAULT_SPATIAL_WEIGHTS
+        )
+        self.weights_loaded = False
+        if os.path.isfile(self.model_path):
+            checkpoint = torch.load(self.model_path, map_location=self.device)
+            state_dict = checkpoint.get("state_dict", checkpoint)
+            self.spatial_model.load_state_dict(state_dict)
+            self.weights_loaded = True
+        else:
+            LOGGER.warning(
+                "Trained Tiny-GenImage weights not found at %s; using an untrained fallback.",
+                self.model_path,
+            )
         self.spatial_model.eval()
 
     def _mc_dropout_predict(self, tensor_x: torch.Tensor, n_passes: int = 5) -> Tuple[float, float]:
         """Runs n forward passes with active dropout to quantify epistemic uncertainty."""
-        self.spatial_model.train() # Enable dropout
+        self.spatial_model.eval()
+        self.spatial_model.dropout.train()  # Enable only dropout; keep BatchNorm frozen.
         preds = []
         with torch.no_grad():
             for _ in range(n_passes):
@@ -155,9 +176,12 @@ class AIGeneratedImageDetector:
             time.sleep(0.05) # Simulated inversion step (documented ~15-30s in full diffusion pipelines)
             dire_score = float(0.6 * spectral_score + 0.4 * spatial_mean)
 
-        # Dual-branch fusion
-        # Spectral frequency artifacts are especially reliable across unseen generators
-        combined_score = 0.55 * spectral_score + 0.45 * spatial_mean
+        # Use the trained spatial branch as the primary signal once weights are
+        # available. Keep the original spectral-heavy blend for clean checkouts
+        # that have not downloaded a model artifact yet.
+        spatial_weight = 0.70 if self.weights_loaded else 0.45
+        spectral_weight = 1.0 - spatial_weight
+        combined_score = spectral_weight * spectral_score + spatial_weight * spatial_mean
         if dire_score is not None:
             combined_score = 0.7 * combined_score + 0.3 * dire_score
 
@@ -170,5 +194,7 @@ class AIGeneratedImageDetector:
             "uncertainty_variance": spatial_variance,
             "deep_scan_used": deep_scan,
             "latency_ms": elapsed_latency_ms,
-            "spectral_meta": spectral_meta
+            "spectral_meta": spectral_meta,
+            "spatial_model_trained": self.weights_loaded,
+            "spatial_model_path": self.model_path,
         }
