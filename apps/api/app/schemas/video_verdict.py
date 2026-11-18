@@ -19,6 +19,7 @@ class SuspiciousFrame(BaseModel):
     timestamp_sec: float
     manipulation_score: float = Field(..., ge=0.0, le=1.0)
     synthetic_score: float = Field(..., ge=0.0, le=1.0)
+    temporal_inconsistency_score: float = Field(0.0, ge=0.0, le=1.0)
     face_detected: bool = False
     heatmap_base64: Optional[str] = None   # RGBA PNG heatmap overlay
     thumbnail_base64: Optional[str] = None  # small JPEG thumbnail for the strip
@@ -47,6 +48,10 @@ class VideoForensicsDetails(BaseModel):
 
     # Video-specific temporal signals
     deepfake_score: float = Field(..., ge=0.0, le=1.0)
+    video_model_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    video_model_status: str = "heuristic_fallback"
+    video_model_kind: Optional[str] = None
+    video_model_threshold: float = Field(0.5, ge=0.0, le=1.0)
     temporal_inconsistency_score: float = Field(..., ge=0.0, le=1.0)
     face_detected_in_video: bool = False
 
